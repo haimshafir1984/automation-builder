@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <title>Wizard Plus — Automations</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background:#f7f8fb; color:#0f172a; }
+    .bubble{ background:#0b1323; border:1px solid #273244; color:#e5e7eb; border-radius:16px; padding:10px 14px; max-width:80% }
+    .bubble.user{ background:#121a2b; }
+    .fade-in{ animation:fadein .35s ease } @keyframes fadein{ from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:none}}
+    .pill{padding:6px 10px;border-radius:999px;font-size:12px;border:1px solid #334155;display:inline-flex;align-items:center;gap:6px;}
+    .pill-ok{background:rgba(16,185,129,.12);border-color:rgba(16,185,129,.3); color:#0bb37b;}
+    .pill-err{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.35); color:#ef4444;}
+    .btn{appearance:none;border:none;border-radius:12px;padding:12px 16px;background:#1a73e8;color:#fff;font-weight:700;cursor:pointer}
+    .btn-ghost{background:#fff;border:1px solid #e5e7eb;color:#0f172a}
+    .chat-input { background:#ffffff; color:#111827; border:1px solid #e5e7eb; border-radius:14px; padding:12px 14px; }
+    code{background:#0b1220;color:#c7d2fe;padding:2px 6px;border-radius:6px;border:1px solid #1f2937}
+  </style>
+</head>
+<body class="min-h-screen flex">
+  <!-- Sidebar -->
+  <aside class="w-64 bg-white shadow p-6 hidden md:block">
+    <h2 class="text-xl font-bold mb-4">📂 האוטומציות שלי</h2>
+    <ul class="space-y-2">
+      <li class="p-3 bg-blue-100 text-blue-700 rounded-lg font-medium">אוטומציה חדשה</li>
+      <li class="p-3 hover:bg-gray-100 rounded-lg cursor-pointer">SLA מיילים</li>
+      <li class="p-3 hover:bg-gray-100 rounded-lg cursor-pointer">לידים לשיטס</li>
+      <li class="p-3 hover:bg-gray-100 rounded-lg cursor-pointer">התראות WhatsApp</li>
+    </ul>
+    <div class="mt-8 text-xs text-gray-400">גרסה 0.6</div>
+  </aside>
+
+  <!-- Main -->
+  <main class="flex-1 p-6 md:p-10">
+    <header class="flex items-center justify-between mb-6">
+      <h1 class="text-2xl font-bold">✨ צור אוטומציה חדשה</h1>
+      <div class="flex items-center gap-3">
+        <span id="g-status" class="pill">טוען…</span>
+        <span id="g-email" class="text-sm text-gray-500"></span>
+        <button id="btn-g-connect" class="btn">🔑 התחבר עם Google</button>
+        <button id="btn-g-disconnect" class="btn-ghost">התנתק</button>
+      </div>
+    </header>
+
+    <!-- Composer -->
+    <section class="bg-white shadow rounded-2xl p-6 max-w-3xl">
+      <label class="block text-sm text-gray-600 mb-2">תאר מה אתה צריך:</label>
+      <textarea id="free-text" class="w-full h-40 chat-input mb-4"
+        placeholder='דוגמה: "כל מייל מ-foo@bar.com שלא נענה 4 שעות – הוסף לשיטס" או "מייל עם ליד בכותרת → Leads"'></textarea>
+      <div class="flex gap-3">
+        <button id="btn-create" class="btn">🚀 צור אוטומציה</button>
+        <button id="btn-debug-nlp" class="btn-ghost">בדיקת NLP</button>
+      </div>
+    </section>
+
+    <!-- Chat -->
+    <section class="mt-8 max-w-3xl">
+      <div id="chat" class="space-y-3">
+        <div class="fade-in flex justify-start"><div class="bubble">כתוב מטרה חופשית ולחץ “צור אוטומציה”. אם יחסר מידע — אשאל כאן. ✍️</div></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    // ---------- API base ----------
+    const API_BASE = (() => {
+      const loc = window.location;
+      if (loc.protocol === 'file:') return 'http://127.0.0.1:5000';
+      if (/:\d+$/.test(loc.host)) return `${loc.protocol}//${loc.host}`;
+      return `${loc.protocol}//${loc.hostname}:5000`;
+    })();
+
+    // ---------- UI helpers ----------
+    function addBubble(html, who='sys') {
+      const chat = document.getElementById('chat');
+      const wrap = document.createElement('div');
+      wrap.className = 'fade-in flex ' + (who === 'user' ? 'justify-end' : 'justify-start');
+      const b = document.createElement('div');
+      b.className = 'bubble ' + (who === 'user' ? 'user' : '');
+      b.innerHTML = html;
+      wrap.appendChild(b);
+      chat.appendChild(wrap);
+      b.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      return b;
+    }
+    function addInputBubble(placeholder, type='text', width='w-80') {
+      const chat = document.getElementById('chat');
+      const wrap = document.createElement('div');
+      wrap.className = 'fade-in flex justify-end';
+      const input = document.createElement('input');
+      input.type = type;
+      input.placeholder = placeholder;
+      input.className = `chat-input ${width}`;
+      wrap.appendChild(input);
+      chat.appendChild(wrap);
+      input.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      input.focus();
+      return input;
+    }
+    function addButton(label, onClick) {
+      const chat = document.getElementById('chat');
+      const wrap = document.createElement('div');
+      wrap.className = 'fade-in flex justify-end';
+      const btn = document.createElement('button');
+      btn.className = 'btn';
+      btn.textContent = label;
+      btn.onclick = onClick;
+      wrap.appendChild(btn);
+      chat.appendChild(wrap);
+      btn.scrollIntoView({ behavior:'smooth', block:'end' });
+      return btn;
+    }
+    function setGoogleStatus(connected, email) {
+      const s = document.getElementById('g-status');
+      s.textContent = connected ? 'מחובר' : 'לא מחובר';
+      s.className = 'pill ' + (connected ? 'pill-ok' : 'pill-err');
+      document.getElementById('g-email').textContent = connected && email ? `(${email})` : '';
+    }
+    function extractSpreadsheetId(input) {
+      if (!input) return null;
+      if (/^[a-zA-Z0-9-_]{30,}$/.test(input)) return input;
+      const m = String(input).match(/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+      return m ? m[1] : null;
+    }
+    async function safeFetch(url, opts) {
+      try { return await fetch(url, opts); }
+      catch (e) { addBubble('❌ שגיאת רשת'); throw e; }
+    }
+
+    // ---------- Google connect ----------
+    async function refreshGoogleAccount() {
+      try {
+        const r = await safeFetch(`${API_BASE}/api/google/tokens`, { credentials:'include' });
+        const j = await r.json();
+        setGoogleStatus(!!j.hasTokens, j.email || null);
+      } catch { setGoogleStatus(false, null); }
+    }
+    async function connectGoogle() {
+      try {
+        const r = await safeFetch(`${API_BASE}/api/google/oauth/url`);
+        const j = await r.json();
+        if (!j.ok || !j.url) return addBubble(`❌ ${j.error || 'שגיאה בהפקת קישור'}`);
+        window.location.href = j.url;
+      } catch { addBubble('❌ שגיאה בהתחברות לגוגל'); }
+    }
+    document.getElementById('btn-g-connect').onclick = connectGoogle;
+    document.getElementById('btn-g-disconnect').onclick = refreshGoogleAccount;
+
+    // ---------- State ----------
+    let currentPlan = null;
+    let collected = {};
+    const askQueue = [];
+
+    // ---------- Missing fields UI ----------
+    function askNext() {
+      if (!askQueue.length) { addBubble('✅ יש לי את כל הנתונים. מוכן להרצה!'); addButton('הפעל עכשיו', executeCurrent); return; }
+      const field = askQueue.shift();
+
+      if (field === 'spreadsheetId') {
+        addBubble('הדבק קישור לגיליון Google Sheets (או ה-ID):');
+        const input = addInputBubble('https://docs.google.com/spreadsheets/d/XXXXX/edit','text','w-[28rem]');
+        addButton('המשך', () => {
+          const id = extractSpreadsheetId(input.value.trim());
+          if (!id) { addBubble('❌ לא הצלחתי לחלץ Spreadsheet ID'); askQueue.unshift('spreadsheetId'); return; }
+          collected.spreadsheetId = id; addBubble('<code>'+id+'</code>', 'user'); askNext();
+        });
+        return;
+      }
+
+      if (field === 'tab' || field === 'sheetName') {
+        addBubble('שם הטאב (דף) בגיליון?');
+        const input = addInputBubble('SLA','text','w-60');
+        addButton('המשך', () => {
+          collected.tab = input.value.trim() || 'SLA';
+          addBubble(collected.tab, 'user'); askNext();
+        });
+        return;
+      }
+
+      if (field === 'fromEmail') {
+        addBubble('מה כתובת המייל של השולח?');
+        const input = addInputBubble('name@domain.com','email','w-80');
+        addButton('המשך', () => {
+          const v = input.value.trim();
+          if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) { addBubble('❌ אימייל לא תקין'); askQueue.unshift('fromEmail'); return; }
+          collected.fromEmail = v; addBubble(v,'user'); askNext();
+        });
+        return;
+      }
+
+      if (field === 'hours') {
+        addBubble('אחרי כמה שעות נחשיב חריגה?');
+        const input = addInputBubble('4','number','w-40');
+        addButton('המשך', () => {
+          const n = Number(input.value); if (!n || n<=0) { addBubble('❌ מספר שעות לא תקין'); askQueue.unshift('hours'); return; }
+          collected.hours = n; addBubble(n+' שעות','user'); askNext();
+        });
+        return;
+      }
+
+      // ברירת מחדל — קבל ערך גנרי
+      addBubble('שדה חסר: <b>'+field+'</b> — הזן ערך:');
+      const input = addInputBubble('ערך...');
+      addButton('המשך', () => { collected[field] = input.value.trim(); addBubble(collected[field]||'—','user'); askNext(); });
+    }
+
+    // ---------- Pipeline fill: מחזיר steps בלבד ----------
+    function fillPipelineSteps(plan) {
+      const original = (plan && (plan.proposal?.steps || plan.steps)) || [];
+      const steps = original.map(s => {
+        const x = JSON.parse(JSON.stringify(s));
+        if (x.action && x.action.type && /sheets/i.test(x.action.type)) {
+          x.action.params = x.action.params || {};
+          if (collected.spreadsheetId) x.action.params.spreadsheetId = collected.spreadsheetId;
+          if (collected.tab) {
+            if (!x.action.params.sheetName) x.action.params.sheetName = collected.tab;
+            if (x.action.params.tab && !x.action.params.sheetName) x.action.params.tab = collected.tab;
+          }
+        }
+        if (x.trigger && x.trigger.type === 'gmail.unreplied') {
+          x.trigger.params = x.trigger.params || {};
+          if (collected.fromEmail) x.trigger.params.fromEmail = collected.fromEmail;
+          if (collected.hours) x.trigger.params.hours = collected.hours;
+        }
+        return x;
+      });
+      return steps;
+    }
+
+    // ---------- Execute with fallbacks ----------
+    async function tryExecute(body) {
+      try {
+        const r = await safeFetch(`${API_BASE}/api/automations/execute`, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(body)
+        });
+        const j = await r.json();
+        if (!j.ok) {
+          const msg = String(j.message || j.error || '').toLowerCase();
+          // אם זו שגיאת פורמט צפויה, נחזור false כדי לנסות פורמט אחר
+          if (msg.includes('empty pipeline') || msg.includes('no steps') || msg.includes('invalid') || msg.includes('missing')) {
+            return false;
+          }
+          // שגיאה "אמיתית" — נראה למשתמש
+          addBubble('❌ '+(j.message || j.error || 'שגיאה בהרצה'));
+          return false;
+        }
+        const s = j.summary || {};
+        addBubble('✅ בוצע! נבדקו '+(s.checked ?? '—')+', נמצאו '+(s.matched ?? '—')+', נוספו '+(s.appended ?? '—')+'.');
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    async function runExecuteSimple(body) {
+      addBubble('⏳ מריץ…');
+      try {
+        const r = await safeFetch(`${API_BASE}/api/automations/execute`, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(body)
+        });
+        const j = await r.json();
+        if (!j.ok) return addBubble('❌ '+(j.message || j.error || 'שגיאה בהרצה'));
+        const s = j.summary || {};
+        addBubble('✅ בוצע! נבדקו '+(s.checked ?? '—')+', נמצאו '+(s.matched ?? '—')+', נוספו '+(s.appended ?? '—')+'.');
+      } catch { addBubble('❌ שגיאת רשת/שרת'); }
+    }
+
+    async function executeCurrent() {
+      if (!currentPlan) { addBubble('❌ אין תכנית פעילה'); return; }
+
+      // מסלולים לא-pipeline (לנוחות/תאימות)
+      if (currentPlan.type !== 'pipeline' && !(currentPlan.proposal && currentPlan.proposal.type === 'pipeline')) {
+        let body;
+        if (currentPlan.type === 'sla-simple') {
+          body = { type:'sla-simple', proposal:{
+            fromEmail: collected.fromEmail || currentPlan.proposal?.fromEmail,
+            hours: collected.hours || currentPlan.proposal?.hours || 4,
+            spreadsheetId: collected.spreadsheetId || currentPlan.proposal?.spreadsheetId,
+            tab: collected.tab || currentPlan.proposal?.tab || 'SLA',
+            limit: currentPlan.proposal?.limit || 100,
+            newerThanDays: currentPlan.proposal?.newerThanDays || 30
+          }};
+        } else if (currentPlan.type === 'lead-intake') {
+          body = { type:'lead-intake', proposal:{
+            q: currentPlan.proposal?.q || 'in:anywhere (subject:"ליד" OR subject:Lead) -in:chats',
+            spreadsheetId: collected.spreadsheetId || currentPlan.proposal?.spreadsheetId,
+            tab: collected.tab || currentPlan.proposal?.tab || 'Leads',
+            limit: currentPlan.proposal?.limit || 50
+          }};
+        } else {
+          addBubble('❌ פורמט תכנית לא נתמך'); return;
+        }
+        if (!body.proposal?.spreadsheetId) { addBubble('❌ חסר Spreadsheet ID'); return; }
+        return runExecuteSimple(body);
+      }
+
+      // כאן: pipeline — מרכיבים steps ושולחים עם fallbacks
+      const steps = fillPipelineSteps(currentPlan);
+      if (!steps || !steps.length) { addBubble('❌ pipeline ריק (אין steps)'); return; }
+      addBubble('⏳ מריץ…');
+
+      // ניסיון 1: { type:'pipeline', steps:[...] }
+      if (await tryExecute({ type:'pipeline', steps })) return;
+
+      // ניסיון 2: { steps:[...] }
+      if (await tryExecute({ steps })) return;
+
+      // ניסיון 3: { type:'pipeline', proposal:{ type:'pipeline', steps:[...] } }
+      if (await tryExecute({ type:'pipeline', proposal:{ type:'pipeline', steps } })) return;
+
+      addBubble('❌ לא הצלחתי להריץ את ה-pipeline (ניסיתי 3 פורמטים). בדוק את /api/automations/execute בצד השרת מהו הפורמט המדויק.');
+    }
+
+    // ---------- Create plan ----------
+    document.getElementById('btn-create').onclick = async () => {
+      const text = (document.getElementById('free-text').value || '').trim();
+      if (!text) { addBubble('❌ כתוב מטרה חופשית בתיבה למעלה'); return; }
+      addBubble(text, 'user');
+
+      try {
+        const r = await safeFetch(`${API_BASE}/api/plan`, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ text })
+        });
+        const j = await r.json();
+        if (!j.ok) { addBubble('❌ '+(j.error || 'שגיאה')); return; }
+
+        currentPlan = j; collected = {}; askQueue.length = 0;
+
+        // Missing fields
+        const missing = (j.missing || []).slice();
+
+        // אם זה pipeline — הסק חסרים לפי הצעדים
+        if ((j.type === 'pipeline') || (j.proposal && j.proposal.type === 'pipeline')) {
+          const steps = (j.proposal?.steps || j.steps || []);
+          const needsSheet = steps.some(s => s.action && /sheets/i.test(s.action.type) && !s.action.params?.spreadsheetId);
+          const needsTab   = steps.some(s => s.action && /sheets/i.test(s.action.type) && !(s.action.params?.sheetName || s.action.params?.tab));
+          if (needsSheet && !missing.includes('spreadsheetId')) missing.unshift('spreadsheetId');
+          if (needsTab && !missing.includes('tab')) missing.push('tab');
+
+          const needsFrom = steps.some(s => s.trigger && s.trigger.type==='gmail.unreplied' && !s.trigger.params?.fromEmail);
+          const needsHours= steps.some(s => s.trigger && s.trigger.type==='gmail.unreplied' && !s.trigger.params?.hours);
+          if (needsFrom && !missing.includes('fromEmail')) missing.unshift('fromEmail');
+          if (needsHours && !missing.includes('hours')) missing.push('hours');
+        }
+
+        addBubble('🧠 סוג תכנית: <b>'+(j.type || j.proposal?.type || '—')+'</b>. נשלים פרטים חסרים.');
+        askQueue.push(...missing);
+        askNext();
+      } catch { addBubble('❌ שגיאת רשת'); }
+    };
+
+    // ---------- NLP debug ----------
+    document.getElementById('btn-debug-nlp').onclick = async () => {
+      const text = (document.getElementById('free-text').value || '').trim();
+      if (!text) { addBubble('❌ כתוב מטרה חופשית בתיבה למעלה'); return; }
+      addBubble('🔎 מריץ /api/nlp/parse…');
+      try{
+        const r = await safeFetch(`${API_BASE}/api/nlp/parse`, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ text })
+        });
+        const j = await r.json();
+        const pretty = JSON.stringify(j, null, 2).replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        addBubble('NLP: <code>'+(j.intent || '—')+'</code> · Provider: <code>'+(j.provider || '—')+'</code><pre class="text-xs mt-2"><code>'+pretty+'</code></pre>');
+      }catch{ addBubble('❌ שגיאת NLP'); }
+    };
+
+    // init
+    refreshGoogleAccount();
+  </script>
+</body>
+</html>

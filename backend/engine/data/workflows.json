@@ -1,0 +1,60 @@
+[
+  {
+    "id": "1755616396193.603",
+    "enabled": true,
+    "source": "google-sheets",
+    "trigger": "row-added",
+    "target": "email",
+    "action": "send",
+    "fields": {},
+    "filters": [
+      {
+        "field": "project name",
+        "op": "equals",
+        "value": "haim"
+      }
+    ],
+    "mapping": {},
+    "params": {
+      "source": {
+        "spreadsheetId": "1HoFa5MUvMeijYYYoLl_cSW7cvhe013qsEvouuewNd3M",
+        "sheetName": "test",
+        "headerRow": 1,
+        "intervalMinutes": 1
+      },
+      "target": {
+        "to": "haim.shafir.1@gmail.com",
+        "subject": "שורה חדשה ב{{sheetName}} (#{{rowIndex}})",
+        "body": "פרטי השורה:\nשם פרויקט: {{row.\"project name\"}}\n{{#sheetUrlRange}}פתיחה בגיליון: {{sheetUrlRange}}{{/sheetUrlRange}}\n{{payloadJson}}"
+      }
+    }
+  },
+  {
+    "id": "1755620222951.114",
+    "enabled": true,
+    "source": "webhook",
+    "trigger": "incoming-webhook",
+    "target": "google-sheets",
+    "action": "append-row",
+    "fields": {},
+    "filters": [],
+    "mapping": {},
+    "params": {
+      "source": {
+        "path": "append-test"
+      },
+      "target": {
+        "spreadsheetId": "1HoFa5MUvMeijYYYoLl_cSW7cvhe013qsEvouuewNd3M",
+        "sheetName": "Leads",
+        "headerRow": 1,
+        "ensureHeaders": true,
+        "columns": [
+          "date",
+          "from",
+          "subject",
+          "textSnippet"
+        ]
+      }
+    }
+  }
+]

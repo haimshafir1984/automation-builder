@@ -1,0 +1,18 @@
+# Node
+node_modules/
+npm-debug.log
+
+# Env
+.env
+.env.local
+
+# Local data & tokens (VERY IMPORTANT)
+backend/data/
+backend_hold/
+**/google_tokens.json
+**/store.json
+**/gsa.json
+
+# Logs
+logs/
+*.log

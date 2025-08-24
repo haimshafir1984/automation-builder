@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <title>אוטומציות — התחברות וגיבוש תכנית</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --bg: #0b1220; --card: #0f172a; --ink: #e5e7eb; --muted:#9ca3af;
+      --brand:#6366f1; --brand-2:#8b5cf6; --ok:#10b981; --err:#ef4444; --bd:#1f2937;
+    }
+    html,body{height:100%;background:linear-gradient(135deg, #0b1220, #111827);color:var(--ink);}
+    body{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;}
+    .container{max-width:980px;margin:32px auto;padding:0 16px;}
+    .card{
+      background: radial-gradient(200% 140% at 0% 0%, rgba(99,102,241,.15), rgba(139,92,246,.06) 40%, rgba(17,24,39,.6) 70%), var(--card);
+      border:1px solid var(--bd); border-radius:20px; padding:22px; box-shadow: 0 10px 40px rgba(0,0,0,.35); margin-bottom:16px;
+    }
+    h1,h2{margin:0 0 10px;}
+    h1{font-size:28px;}
+    p.lead{margin:0 0 12px; color:var(--muted);}
+    .row{display:flex;gap:10px;align-items:center;margin:10px 0;flex-wrap:wrap;}
+    label{font-weight:600;}
+    input[type="text"], textarea{
+      flex:1; min-width:280px; padding:12px 14px; border:1px solid #273244; background:#0b1323; color:var(--ink);
+      border-radius:12px; outline:none; transition:.2s;
+    }
+    input[type="text"]:focus, textarea:focus { border-color:#384863; box-shadow:0 0 0 3px rgba(99,102,241,.25); }
+    textarea{min-height:100px; resize:vertical;}
+    .btn{
+      appearance:none; border:none; border-radius:12px; padding:12px 16px; background:linear-gradient(135deg,var(--brand),var(--brand-2));
+      color:#fff; cursor:pointer; font-weight:700; letter-spacing:.3px; box-shadow:0 8px 24px rgba(99,102,241,.35);
+    }
+    .btn:hover{filter:brightness(1.03);}
+    .btn-ghost{background:transparent;border:1px solid #334155;color:var(--ink);box-shadow:none;}
+    .muted{color:var(--muted);}
+    .pill{padding:6px 10px;border-radius:999px;font-size:12px;border:1px solid #334155;display:inline-flex;align-items:center;gap:6px;}
+    .pill-ok{background:rgba(16,185,129,.12);border-color:rgba(16,185,129,.3); color:#a7f3d0;}
+    .pill-err{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.35); color:#fecaca;}
+    .divider{height:1px;background:#1f2937;margin:16px 0;}
+    .result{margin-top:10px;}
+    .chat{display:flex;flex-direction:column;gap:10px;}
+    .bubble{background:#0b1323; border:1px solid #273244; border-radius:14px; padding:12px 14px;}
+    .bubble.user{background:#121a2b;}
+    code{background:#0b1220;border:1px solid #1f2937;padding:2px 6px;border-radius:6px;}
+    .grid{display:grid;grid-template-columns:1fr;gap:10px;}
+    @media(min-width:720px){.grid{grid-template-columns:1fr 1fr;}}
+    .hide{display:none;}
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <!-- התחברות -->
+  <div class="card">
+    <h1>אוטומציות — התחברות</h1>
+    <p class="lead">התחבר עם Google (OAuth), ודאג שיש הרשאה לגיליון Google Sheets. משם נבנה אוטומציות מטקסט חופשי.</p>
+
+    <div class="row">
+      <label>מצב Google:</label>
+      <span id="g-status" class="pill">טוען…</span>
+      <span id="g-email" class="muted"></span>
+      <button id="btn-g-connect" class="btn">התחבר עם Google</button>
+      <button id="btn-g-disconnect" class="btn btn-ghost">התנתק</button>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="row">
+      <label for="sheet-id">Spreadsheet ID או קישור מלא (למתן הרשאת גישה):</label>
+    </div>
+    <div class="row">
+      <input id="sheet-id" type="text" placeholder="https://docs.google.com/spreadsheets/d/...." />
+      <button id="btn-test" class="btn">בדיקת גישה</button>
+      <button id="btn-grant" class="btn btn-ghost">הענק גישה (Service Account)</button>
+    </div>
+    <div class="muted">טיפ: אפשר להדביק URL מלא — המערכת תחילץ ID אוטומטית.</div>
+    <div id="result" class="result"></div>
+
+    <div class="divider"></div>
+    <strong>מייל Service Account:</strong> <span id="sa-info" class="muted">טוען…</span>
+  </div>
+
+  <!-- Planner — טקסט חופשי ושאלות דינמיות -->
+  <div class="card">
+    <h2>בוא נבנה אוטומציה בטקסט חופשי</h2>
+    <p class="lead">כתוב בעברית פשוטה מה אתה צריך. אם חסר מידע — אשאל אותך ונריץ.</p>
+
+    <div class="chat" id="chat">
+      <div class="bubble">הי! לדוגמה עבור SLA: “עקוב אחרי מיילים מ-<code>sender@domain.com</code> שחורגים מ-<code>4 שעות</code> וכתוב אותם לטאב <code>SLA</code> בגיליון ...”</div>
+    </div>
+
+    <div class="row">
+      <textarea id="plan-text" placeholder='למשל: "SLA: מיילים מ support@myco.com מעל 4 שעות → כתוב לטאב SLA בגיליון: https://docs.google.com/spreadsheets/d/1AbC.../edit"'></textarea>
+    </div>
+    <div class="row">
+      <button id="btn-plan-suggest" class="btn">שלח</button>
+    </div>
+
+    <div id="plan-form" class="grid hide">
+      <div id="f-spreadsheet">
+        <label>Spreadsheet ID / URL:</label>
+        <input id="plan-spreadsheet" type="text" placeholder="https://docs.google.com/spreadsheets/d/..." />
+      </div>
+      <div id="f-tab">
+        <label>Tab (דף בגיליון):</label>
+        <input id="plan-tab" type="text" placeholder="SLA" />
+      </div>
+
+      <!-- לשימוש ב-lead-intake -->
+      <div id="f-keyword" class="hide">
+        <label>מילת מפתח (Subject):</label>
+        <input id="plan-keyword" type="text" placeholder="ליד" />
+      </div>
+      <div id="f-limit" class="hide">
+        <label>Limit:</label>
+        <input id="plan-limit" type="text" placeholder="30" />
+      </div>
+
+      <!-- לשימוש ב-sla-simple -->
+      <div id="f-from">
+        <label>כתובת שולח (from):</label>
+        <input id="plan-from" type="text" placeholder="support@myco.com" />
+      </div>
+      <div id="f-hours">
+        <label>סף שעות (חריגה):</label>
+        <input id="plan-hours" type="text" placeholder="4" />
+      </div>
+
+      <div>
+        <button id="btn-plan-exec" class="btn">הפעל</button>
+      </div>
+    </div>
+
+    <div id="plan-out" class="result"></div>
+  </div>
+
+</div>
+
+<script>
+  // --- API base ---
+  const API_BASE = (() => {
+    try {
+      const loc = window.location;
+      if (loc.protocol === 'file:') return 'http://127.0.0.1:5000';
+      if (/:\d+$/.test(loc.host)) return `${loc.protocol}//${loc.host}`;
+      return `${loc.protocol}//${loc.hostname}:5000`;
+    } catch { return 'http://127.0.0.1:5000'; }
+  })();
+  async function safeFetch(url, opts){ try{ return await fetch(url, opts);}catch(e){ alert('❌ שגיאת רשת מול '+API_BASE); throw e; } }
+
+  // --- UI helpers ---
+  function setStatus(connected, email){
+    const s = document.getElementById('g-status');
+    s.textContent = connected ? 'מחובר' : 'לא מחובר';
+    s.className = 'pill ' + (connected ? 'pill-ok' : 'pill-err');
+    document.getElementById('g-email').textContent = email ? `(${email})` : '';
+  }
+  function showResult(el, ok, msg){
+    el.innerHTML = `<div class="pill ${ok?'pill-ok':'pill-err'}">${ok?'✅':'❌'} ${msg}</div>`;
+  }
+  function addBubble(text, who='sys'){
+    const chat = document.getElementById('chat');
+    const b = document.createElement('div'); b.className = 'bubble ' + (who==='user'?'user':''); b.innerHTML = text;
+    chat.appendChild(b); b.scrollIntoView({behavior:'smooth', block:'end'});
+  }
+  function show(el){ el.classList.remove('hide'); } function hide(el){ el.classList.add('hide'); }
+
+  // --- Google account ---
+  async function refreshGoogleAccount(){
+    try {
+      const r = await safeFetch(`${API_BASE}/api/google/account`, { credentials: 'include' });
+      const j = await r.json();
+      setStatus(!!j.connected, j.email || null);
+    } catch { setStatus(false, null); }
+  }
+  async function connectGoogle(){
+    const r = await safeFetch(`${API_BASE}/api/google/auth-url`, { credentials: 'include' });
+    const j = await r.json();
+    if (!j.ok) return alert(j.error || 'שגיאה בהפקת קישור התחברות');
+    const w = window.open(j.url, 'google_auth', 'width=520,height=600');
+    if (!w) alert('אפשר Pop-ups לעמוד הזה ונסה שוב.');
+  }
+  async function disconnectGoogle(){
+    await safeFetch(`${API_BASE}/api/google/disconnect`, { method:'POST', credentials:'include' });
+    await refreshGoogleAccount();
+  }
+
+  // --- Sheets helpers ---
+  async function testAccess(){
+    const raw = document.getElementById('sheet-id').value.trim();
+    if (!raw) return alert('נא להדביק Spreadsheet ID או קישור מלא');
+    const u = new URL(`${API_BASE}/api/sheets/test-access`); u.searchParams.set('spreadsheetId', raw); u.searchParams.set('mode','auto');
+    const r = await safeFetch(u, { credentials:'include' }); const j = await r.json();
+    showResult(document.getElementById('result'), j.ok, j.ok ? `יש גישה לגיליון (ID: ${j.spreadsheetId}, מצב: ${j.mode})` : (j.error||'אין גישה'));
+  }
+  async function grantAccess(){
+    const raw = document.getElementById('sheet-id').value.trim(); if (!raw) return alert('נא להדביק Spreadsheet ID או קישור מלא');
+    const r = await safeFetch(`${API_BASE}/api/sheets/grant-access`, {
+      method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include',
+      body: JSON.stringify({ spreadsheetId: raw }),
+    });
+    const j = await r.json();
+    showResult(document.getElementById('result'), j.ok, j.ok ? `הוענקה גישה ל-Service Account: ${j.grantedTo}` : (j.error||'נכשל להעניק גישה'));
+  }
+  async function loadServiceAccountEmail(){
+    const box = document.getElementById('sa-info');
+    try{
+      const r = await safeFetch(`${API_BASE}/api/google/service-account`, { credentials:'include' });
+      const j = await r.json();
+      if (j.ok && j.email) box.innerHTML = `<code>${j.email}</code>`;
+      else if (j.error) box.textContent = `לא זמין: ${j.error}`;
+      else box.textContent = 'לא הוגדר GOOGLE_SERVICE_ACCOUNT_JSON (לא חובה)';
+    }catch{ box.textContent = 'שגיאה בטעינת מייל ה-SA'; }
+  }
+
+  // --- Planner ---
+  let currentType = null;
+
+  function renderPlanForm(proposal, missing){
+    currentType = proposal.type || currentType || 'sla-simple';
+
+    const form = document.getElementById('plan-form');
+    const out = document.getElementById('plan-out');
+
+    // מלא שדות
+    document.getElementById('plan-spreadsheet').value = proposal.spreadsheetId || '';
+    document.getElementById('plan-tab').value = proposal.tab || (currentType==='sla-simple' ? 'SLA' : 'Leads');
+    document.getElementById('plan-keyword').value = proposal.keyword || 'ליד';
+    document.getElementById('plan-limit').value = proposal.limit || (currentType==='sla-simple' ? 100 : 30);
+    document.getElementById('plan-from').value = proposal.fromEmail || '';
+    document.getElementById('plan-hours').value = proposal.hours != null ? proposal.hours : 4;
+
+    // הצג/הסתר שדות רלוונטיים
+    show(form);
+    const fSpreadsheet = document.getElementById('f-spreadsheet');
+    const fTab = document.getElementById('f-tab');
+    const fKeyword = document.getElementById('f-keyword');
+    const fLimit = document.getElementById('f-limit');
+    const fFrom = document.getElementById('f-from');
+    const fHours = document.getElementById('f-hours');
+
+    show(fSpreadsheet); show(fTab);
+    if (currentType === 'sla-simple'){ show(fFrom); show(fHours); hide(fKeyword); show(fLimit); }
+    else { hide(fFrom); hide(fHours); show(fKeyword); show(fLimit); }
+
+    const miss = (missing||[]);
+    if (miss.length) {
+      addBubble(`צריך עוד נתונים: <b>${miss.join(', ')}</b>. מלא/י למטה ולחץ/י <b>הפעל</b>.`);
+    } else {
+      addBubble(`יש לי הכל. לחץ/י <b>הפעל</b> להפעלה.`);
+    }
+
+    out.innerHTML = `
+      <div class="bubble">
+        <div><b>Intent:</b> ${currentType}</div>
+        ${currentType==='sla-simple'
+          ? `<div><b>From:</b> <code>${proposal.fromEmail||'(חסר)'}</code> | <b>Hours:</b> <code>${proposal.hours||'(חסר)'}</code></div>`
+          : `<div><b>Keyword:</b> <code>${proposal.keyword}</code></div>`}
+        <div><b>SpreadsheetId:</b> <code>${proposal.spreadsheetId || '(חסר)'}</code> | <b>Tab:</b> <code>${proposal.tab}</code></div>
+      </div>
+    `;
+  }
+
+  async function planSuggest(){
+    const text = (document.getElementById('plan-text').value||'').trim();
+    if (!text) return;
+    addBubble(text, 'user');
+    const r = await safeFetch(`${API_BASE}/api/plan`, {
+      method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include',
+      body: JSON.stringify({ text })
+    });
+    const j = await r.json();
+    if (!j.ok) return addBubble(`❌ ${j.error||'שגיאה'}`);
+    renderPlanForm(j.proposal, j.missing);
+  }
+
+  async function planExecute(){
+    const spreadsheet = document.getElementById('plan-spreadsheet').value.trim();
+    const tab = (document.getElementById('plan-tab').value.trim() || (currentType==='sla-simple'?'SLA':'Leads'));
+    const limit = Number(document.getElementById('plan-limit').value) || (currentType==='sla-simple'?100:30);
+
+    let body;
+
+    if (currentType === 'sla-simple'){
+      const fromEmail = document.getElementById('plan-from').value.trim();
+      const hours = Number(document.getElementById('plan-hours').value);
+      if (!fromEmail || !hours) { addBubble('❌ חסר fromEmail או hours'); return; }
+      body = { type:'sla-simple', proposal: { fromEmail, hours, spreadsheetId: spreadsheet, tab, limit } };
+    } else {
+      const keyword = (document.getElementById('plan-keyword').value.trim() || 'ליד');
+      const needsQuotes = /[\sא-ת]/.test(keyword);
+      const kw = needsQuotes ? `"${keyword}"` : keyword;
+      const q = `in:anywhere (subject:${kw} OR subject:Lead) -in:chats`;
+      body = { type:'lead-intake', proposal: { q, spreadsheetId: spreadsheet, tab, limit } };
+    }
+
+    const r = await safeFetch(`${API_BASE}/api/plan/execute`, {
+      method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include',
+      body: JSON.stringify(body)
+    });
+    const j = await r.json();
+    if (!j.ok) return addBubble(`❌ ${j.error||'שגיאה'}`);
+
+    if (currentType === 'sla-simple'){
+      addBubble(`בוצע! נבדקו ${j.checked}, נמצאו ${j.matched} שעברו ${j.hours} שעות, נוספו ${j.appended} לשיט.`);
+    } else {
+      addBubble(`בוצע! נבדקו ${j.checked}, חדשים ${j.newItems}, נוספו ${j.appended}.`);
+    }
+  }
+
+  // OAuth popup callback
+  window.addEventListener('message', (ev) => { if (ev.data?.type === 'GOOGLE_CONNECTED') refreshGoogleAccount(); });
+
+  // init
+  window.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('btn-g-connect').onclick = connectGoogle;
+    document.getElementById('btn-g-disconnect').onclick = disconnectGoogle;
+    document.getElementById('btn-test').onclick = testAccess;
+    document.getElementById('btn-grant').onclick = grantAccess;
+
+    document.getElementById('btn-plan-suggest').onclick = planSuggest;
+    document.getElementById('btn-plan-exec').onclick = planExecute;
+
+    refreshGoogleAccount();
+    loadServiceAccountEmail();
+  });
+</script>
+</body>
+</html>

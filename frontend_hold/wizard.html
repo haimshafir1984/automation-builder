@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8"/>
+  <title>אשף אוטומציות — טקסט חופשי → Sheets → Email/WhatsApp</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <style>
+    :root{ --bg:#fafafa; --fg:#111; --muted:#666; --card:#fff; --border:#e9e9e9; }
+    *{ box-sizing:border-box }
+    body{ font-family:system-ui,Segoe UI,Arial; margin:24px; background:var(--bg); color:var(--fg) }
+    h1,h2{ margin:0 0 8px }
+    .sub{ color:var(--muted); margin-bottom:16px; font-size:14px }
+    .grid{ display:grid; gap:12px }
+    .two{ grid-template-columns: 1fr 1fr }
+    .card{ background:var(--card); border:1px solid var(--border); border-radius:16px; padding:16px; margin:16px 0; box-shadow:0 1px 2px rgba(0,0,0,.04) }
+    label{ font-size:13px; color:#333; display:block; margin:6px 0 6px }
+    input,select,textarea{ width:100%; padding:10px; border:1px solid #ddd; border-radius:10px; font-size:14px; background:#fff }
+    textarea{ resize:vertical }
+    .row{ display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap }
+    .row > *{ flex:1 1 220px }
+    .small{ font-size:12px; color:#555 }
+    .muted{ color:#777 }
+    .btns{ display:flex; gap:8px; flex-wrap:wrap }
+    button{ padding:10px 16px; border:0; background:#111; color:#fff; border-radius:10px; cursor:pointer }
+    button.secondary{ background:#eee; color:#111 }
+    button.ghost{ background:transparent; border:1px dashed #bbb; color:#333 }
+    pre{ background:#0b1020; color:#d9f0ff; padding:12px; border-radius:10px; overflow:auto; max-height:42vh }
+    .pill{ display:inline-block; padding:4px 10px; border-radius:999px; font-size:12px; background:#f0f0f0; margin-inline-start:6px }
+    .ok{ color:#0a7b26 }
+    .err{ color:#b00020 }
+  </style>
+</head>
+<body>
+  <h1>אשף אוטומציה</h1>
+  <div class="sub">כתוב בשפה חופשית מה אתה רוצה, נבין את הכוונה, ונבקש רק את מה שחסר (Sheets → Email/WhatsApp).</div>
+
+  <!-- שלב 1: טקסט חופשי -->
+  <div class="card">
+    <h2>1) תיאור חופשי</h2>
+    <div class="grid">
+      <textarea id="freeText" rows="3" placeholder='למשל: "כשנוספת שורה חדשה בגוגל שיטס, אם בעמודה project name הערך haim — שלח ווטסאפ ל-+9725... עם כל הפרטים"'></textarea>
+    </div>
+    <div class="btns" style="margin-top:10px">
+      <button id="btnParse">פענח</button>
+      <button class="secondary" id="btnUseSheets">קיצור: Sheets→Email</button>
+      <button class="secondary" id="btnUseWA">קיצור: Sheets→WhatsApp</button>
+    </div>
+    <div id="intentResult" class="small muted" style="margin-top:8px"></div>
+  </div>
+
+  <!-- שלב 2: פרטי הטריגר (Sheets) + טעינת כותרות -->
+  <div class="card">
+    <h2>2) טריגר: Google Sheets (שורה חדשה)</h2>
+    <div class="row">
+      <div>
+        <label>Spreadsheet URL או ID</label>
+        <input id="sheetUrl" placeholder="https://docs.google.com/spreadsheets/d/ID/edit … או רק ה-ID">
+      </div>
+      <div>
+        <label>שם לשונית (Sheet)</label>
+        <input id="sheetName" value="Sheet1">
+      </div>
+      <div style="max-width:140px">
+        <label>שורת כותרת</label>
+        <input id="headerRow" type="number" value="1" min="1">
+      </div>
+      <div style="max-width:160px">
+        <label>תדירות (דקות)</label>
+        <input id="interval" type="number" value="1" min="1">
+      </div>
+      <div style="max-width:180px">
+        <label>&nbsp;</label>
+        <button class="secondary" id="btnLoadHeaders">טען כותרות</button>
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>בחר עמודה (לסינון)</label>
+        <select id="fFieldSelect">
+          <option value="">(עדיין לא נטען)</option>
+        </select>
+      </div>
+      <div style="max-width:160px">
+        <label>אופרטור</label>
+        <select id="fOp">
+          <option value="">(ללא)</option>
+          <option value="equals">שווה</option>
+          <option value="contains">מכיל</option>
+          <option value="not-empty">לא ריק</option>
+        </select>
+      </div>
+      <div>
+        <label>ערך</label>
+        <input id="fValue" placeholder="למשל haim">
+      </div>
+    </div>
+
+    <div class="small">
+      טיפ: אם לא בטוחים בשם העמודה, אפשר לבחור לפי אות (A/B/C…). טעינת כותרות דורשת שיתוף הגיליון ל־Service Account שמוגדר בשרת.
+    </div>
+  </div>
+
+  <!-- שלב 3: יעד -->
+  <div class="card">
+    <h2>3) יעד — לאן לשלוח?</h2>
+    <div class="row">
+      <div style="max-width:240px">
+        <label>בחר יעד</label>
+        <select id="targetType">
+          <option value="email">Email</option>
+          <option value="whatsapp">WhatsApp (Twilio)</option>
+        </select>
+      </div>
+      <div id="targetHint" class="small muted" style="align-self:center">
+        אם תשאיר שדות ריקים — יילקח מה־ENV בשרת. אם תמלא — זה <b>ידרוס</b> את ה־ENV ויישלח לפי מה שהזנת.
+      </div>
+    </div>
+
+    <div id="cfg-email" class="grid two" style="margin-top:8px">
+      <div>
+        <label>To (נמען)</label>
+        <input id="emailTo" placeholder="you@example.com">
+      </div>
+      <div>
+        <label>Subject</label>
+        <input id="emailSub" value="שורה חדשה בגליון">
+      </div>
+      <div class="grid" style="grid-column: 1/-1">
+        <label>Body (תבנית Mustache — כולל כל השורה כברירת מחדל)</label>
+        <textarea id="emailBody" rows="4">פרטי השורה:
+{{payloadJson}}</textarea>
+      </div>
+    </div>
+
+    <div id="cfg-whatsapp" class="grid" style="display:none; margin-top:8px">
+      <div class="row">
+        <div>
+          <label>To (whatsapp:+972...)</label>
+          <input id="waTo" placeholder="+9725... / 9725... / whatsapp:+9725...">
+          <div class="small muted">בסנדבוקס של Twilio הנמען חייב לבצע opt-in (join &lt;code&gt;).</div>
+        </div>
+        <div>
+          <label>From (whatsapp:+1...)</label>
+          <input id="waFrom" placeholder="+1415... / whatsapp:+1415... (אם ריק — יילקח מה-ENV)">
+          <div class="small muted">בסנדבוקס ה־From הוא בד"כ whatsapp:+14155238886.</div>
+        </div>
+      </div>
+      <div>
+        <label>Text (תבנית Mustache — כולל כל השורה כברירת מחדל)</label>
+        <textarea id="waText" rows="4">שורה חדשה ב-WhatsApp:
+{{payloadJson}}</textarea>
+      </div>
+    </div>
+  </div>
+
+  <!-- שלב 4: Preview & יצירה -->
+  <div class="card">
+    <h2>4) Preview & יצירה</h2>
+    <div class="btns">
+      <button class="secondary" id="btnPreview">Preview</button>
+      <button id="btnCreate">צור אוטומציה</button>
+      <button class="ghost" id="btnTick" disabled>הרץ עכשיו (Tick)</button>
+    </div>
+    <div id="status" class="small" style="margin-top:8px"></div>
+    <pre id="out"></pre>
+  </div>
+
+<script>
+const API_BASE = "http://127.0.0.1:5000";
+const $ = s => document.querySelector(s);
+
+const state = {
+  headers: [],
+  lastWorkflowId: null,
+  parsedSpec: null
+};
+
+function parseSpreadsheetId(input){
+  input = (input||"").trim();
+  const m = input.match(/\/d\/([a-zA-Z0-9-_]+)/);
+  return m ? m[1] : input;
+}
+function indexToLetters(i){
+  let s=""; i=Number(i);
+  do{ s=String.fromCharCode((i%26)+65)+s; i=Math.floor(i/26)-1; }while(i>=0);
+  return s;
+}
+function normalizeWhatsApp(s){
+  s = (s || "").trim();
+  if (!s) return "";
+  if (!s.startsWith("whatsapp:")){
+    if (s.startsWith("+")) s = "whatsapp:" + s;
+    else if (/^\d+$/.test(s)) s = "whatsapp:+" + s; // "9725..." -> "+9725..."
+  }
+  return s;
+}
+
+async function parseIntent(){
+  const text = $("#freeText").value.trim();
+  if (!text) { $("#intentResult").textContent="אנא כתוב תיאור קצר"; return; }
+  $("#intentResult").innerHTML = "מפענח…";
+  try{
+    const r = await fetch(`${API_BASE}/api/parse-intent`, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json; charset=utf-8" },
+      body: JSON.stringify({ text })
+    });
+    const data = await r.json();
+    state.parsedSpec = data.spec || null;
+
+    if (state.parsedSpec) {
+      if (state.parsedSpec.target === "whatsapp") $("#targetType").value = "whatsapp";
+      if (state.parsedSpec.target === "email") $("#targetType").value = "email";
+      toggleTargetUI();
+    }
+
+    $("#intentResult").innerHTML = data?.success
+      ? `<span class="ok">✓</span> זוהה: <span class="pill">source: ${state.parsedSpec?.source||"?"}</span> <span class="pill">trigger: ${state.parsedSpec?.trigger||"?"}</span> <span class="pill">target: ${state.parsedSpec?.target||"?"}</span>`
+      : `<span class="err">שגיאה בזיהוי</span>`;
+  }catch(e){
+    $("#intentResult").innerHTML = `<span class="err">שגיאה: ${e.message}</span>`;
+  }
+}
+
+async function loadHeaders(){
+  const spreadsheetId = parseSpreadsheetId($("#sheetUrl").value);
+  const sheetName = $("#sheetName").value || "Sheet1";
+  const headerRow = Number($("#headerRow").value || 1);
+  if (!spreadsheetId) { alert("אנא הזן Spreadsheet ID/URL"); return; }
+  const url = `${API_BASE}/api/sheets/headers?spreadsheetId=${encodeURIComponent(spreadsheetId)}&sheetName=${encodeURIComponent(sheetName)}&headerRow=${headerRow}`;
+  const r = await fetch(url);
+  const data = await r.json();
+  if (!data.ok){ alert("שגיאה בטעינת כותרות: " + (data.error||"")); return; }
+  state.headers = data.headers || [];
+  const sel = $("#fFieldSelect");
+  sel.innerHTML = `<option value="">(ללא פילטר)</option>`;
+  state.headers.forEach((name,i)=>{
+    const letter = indexToLetters(i);
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = `${letter} — ${name}`;
+    sel.appendChild(opt);
+  });
+  const grp = document.createElement("optgroup"); grp.label = "לפי אות";
+  for(let i=0;i<52;i++){
+    const opt = document.createElement("option");
+    opt.value = indexToLetters(i);
+    opt.textContent = indexToLetters(i);
+    grp.appendChild(opt);
+  }
+  sel.appendChild(grp);
+}
+
+function toggleTargetUI(){
+  const t = $("#targetType").value;
+  $("#cfg-email").style.display = (t==="email") ? "grid" : "none";
+  $("#cfg-whatsapp").style.display = (t==="whatsapp") ? "grid" : "none";
+}
+
+function buildSpec(){
+  // טריגר: Sheets row-added
+  const spreadsheetId = parseSpreadsheetId($("#sheetUrl").value);
+  const sheetName = $("#sheetName").value || "Sheet1";
+  const headerRow = Number($("#headerRow").value || 1);
+  const intervalMinutes = Number($("#interval").value || 1);
+
+  const field = $("#fFieldSelect").value.trim();
+  const op = $("#fOp").value.trim();
+  const val = $("#fValue").value;
+
+  const filters = [];
+  if (field && op){
+    const f = { field, op };
+    if (op !== "not-empty") f.value = val ?? "";
+    filters.push(f);
+  }
+
+  const target = $("#targetType").value; // 'email' | 'whatsapp'
+  let params_target = {};
+
+  if (target === "email"){
+    params_target = {
+      to: $("#emailTo").value || undefined, // אם ריק — השרת ייקח מה-ENV
+      subject: $("#emailSub").value || "שורה חדשה בגליון",
+      body: $("#emailBody").value || "פרטי השורה:\n{{payloadJson}}"
+    };
+  } else if (target === "whatsapp"){
+    const toRaw   = $("#waTo").value;
+    const fromRaw = $("#waFrom").value;
+    params_target = {
+      to:   toRaw   ? normalizeWhatsApp(toRaw)   : undefined, // אם מולא — דורס ENV
+      from: fromRaw ? normalizeWhatsApp(fromRaw) : undefined, // אם מולא — דורס ENV
+      text: $("#waText").value || "שורה חדשה:\n{{payloadJson}}"
+    };
+  }
+
+  const spec = {
+    source: "google-sheets",
+    trigger: "row-added",
+    target,
+    action: "send",
+    fields: {},
+    filters,
+    mapping: {},
+    params: {
+      source: { spreadsheetId, sheetName, headerRow, intervalMinutes },
+      target: params_target
+    }
+  };
+  return spec;
+}
+
+function showPreview(){
+  const spec = buildSpec();
+  $("#out").textContent = JSON.stringify(spec, null, 2);
+  $("#status").textContent = "Preview מוכן — בדוק וערוך במידת הצורך.";
+}
+
+async function createAutomation(){
+  const spec = buildSpec();
+  if (!spec.params.source.spreadsheetId){
+    alert("אנא הזן Spreadsheet ID/URL"); return;
+  }
+  $("#status").textContent = "יוצר אוטומציה…";
+  $("#out").textContent = JSON.stringify(spec, null, 2);
+
+  try{
+    const r = await fetch(`${API_BASE}/api/automation`, {
+      method: "POST",
+      headers: { "Content-Type":"application/json; charset=utf-8" },
+      body: JSON.stringify({ spec })
+    });
+    const data = await r.json();
+    $("#out").textContent = JSON.stringify(data, null, 2);
+    if (data.success && data.workflow?.id){
+      state.lastWorkflowId = data.workflow.id;
+      $("#status").innerHTML = `✔ נוצר וורקפלואו <span class="pill">${state.lastWorkflowId}</span>`;
+      $("#btnTick").disabled = false;
+    } else {
+      $("#status").innerHTML = `<span class="err">נכשלה יצירת האוטומציה</span>`;
+      $("#btnTick").disabled = true;
+    }
+  }catch(e){
+    $("#status").innerHTML = `<span class="err">שגיאה: ${e.message}</span>`;
+    $("#btnTick").disabled = true;
+  }
+}
+
+async function tickWorkflow(){
+  if (!state.lastWorkflowId) return;
+  $("#status").textContent = "מריץ עכשיו (tick)…";
+  try{
+    const r = await fetch(`${API_BASE}/engine/tick/${state.lastWorkflowId}`, { method:"POST" });
+    const data = await r.json();
+    $("#out").textContent = JSON.stringify(data, null, 2);
+    if (data.ok) $("#status").innerHTML = `✔ הופעל ידנית (tick) עבור <span class="pill">${state.lastWorkflowId}</span>`;
+    else $("#status").innerHTML = `<span class="err">Tick נכשל</span>`;
+  }catch(e){
+    $("#status").innerHTML = `<span class="err">שגיאה: ${e.message}</span>`;
+  }
+}
+
+/* אירועים */
+$("#btnParse").onclick = parseIntent;
+$("#btnUseSheets").onclick = ()=>{
+  $("#freeText").value = "כשנוספת שורה חדשה בגוגל שיטס שלח לי מייל עם פרטי השורה";
+  parseIntent();
+  $("#targetType").value = "email";
+  toggleTargetUI();
+};
+$("#btnUseWA").onclick = ()=>{
+  $("#freeText").value = "כשנוספת שורה חדשה בגוגל שיטס שלח לי ווטסאפ עם פרטי השורה";
+  parseIntent();
+  $("#targetType").value = "whatsapp";
+  toggleTargetUI();
+};
+$("#btnLoadHeaders").onclick = loadHeaders;
+$("#targetType").onchange = toggleTargetUI;
+$("#btnPreview").onclick = showPreview;
+$("#btnCreate").onclick = createAutomation;
+$("#btnTick").onclick = tickWorkflow;
+</script>
+</body>
+</html>
