@@ -1,16 +1,12 @@
 # backend/nixpacks.toml
 [phases.setup]
-# גרסת Node (כמו שהלוג מראה)
 nixPkgs = ["nodejs_18", "npm-9_x"]
 
 [phases.install]
-# התקנה אחת נקיה
-cmds = ["npm ci"]
+cmds = ["npm ci --no-audit --no-fund"]
 
 [phases.build]
-# אין בניה נפרדת לשרת אקספרס
-cmds = []
+cmds = [] # אין שלב build לשרת express
 
 [start]
-# מריץ את השרת שלנו
 cmd = "node server.js"
