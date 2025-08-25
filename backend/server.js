@@ -1,23 +1,43 @@
-// boot-marker: 2025-08-25T13:35:26.3611744+03:00
 // backend/server.js
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
+
 const app = express();
 
-app.use((req,res,next) => { console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`); next(); });
+// חותמת בזמן עלייה — נזהה בקלות ב־logs של Railway
+console.log('boot-marker:', new Date().toISOString());
+
+// דיבאג נוסף על משתנים חשובים
+console.log('[boot] __dirname:', __dirname);
+console.log('[boot] process.env.PORT:', process.env.PORT);
+console.log('[boot] process.env.HOST:', process.env.HOST);
+
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  next();
+});
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// נתיבי API
 app.use('/api/google', require('./routes/google'));
 app.use('/api/plan', require('./routes/plan'));
 app.use('/api/nlp', require('./routes/nlp'));
-app.use('/api/automations', require('./routes/automations')); // כפי שהיה אצלך
+app.use('/api/automations', require('./routes/automations'));
 
-app.get('/health', (_,res)=>res.send('OK'));
-app.get('/', (req,res)=>res.sendFile(path.join(__dirname, 'public', 'wizard_plus.html')));
+// healthcheck (שירותי deploy בודקים אותו)
+app.get('/health', (_, res) => res.send('OK'));
 
-const PORT = process.env.PORT || 5000, HOST = '0.0.0.0';
-app.listen(PORT, HOST, () => console.log(`Server listening on http://${HOST}:${PORT}`));
-// touch: 2025-08-25T11:23:14.5781681+03:00
+// דף ברירת מחדל — wizard_plus.html
+app.get('/', (req, res) =>
+  res.sendFile(path.join(__dirname, 'public', 'wizard_plus.html'))
+);
 
+// קביעת פורט והאזנה על כל הכתובות (0.0.0.0)
+const PORT = process.env.PORT ? Number(process.env.PORT) : 5000;
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server listening on http://0.0.0.0:${PORT}`);
+});
