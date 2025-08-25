@@ -1,6 +1,6 @@
 {
   "name": "automation-backend-plus",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "description": "Internal engine backend with extra connectors and triggers",
   "main": "server.js",
   "scripts": {
@@ -27,3 +27,5 @@
     "twilio": "^5.8.0"
   }
 }
+
+
