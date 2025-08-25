@@ -17,14 +17,14 @@ Copy-Item .env.example .env
 
 # 3) Run
 node server.js
-# Server listening on http://127.0.0.1:5000
+# Server listening on http://0.0.0.0:5000
 ```
 
 ## Plan from text
 
 ```powershell
 $body = @{ text = "כל מייל ממשתמש foo@bar.com שלא קיבל מענה 4 שעות → שלח וואטסאפ ל+972501112233 וגם תוסיף לשיט" } | ConvertTo-Json
-Invoke-RestMethod -Uri "http://127.0.0.1:5000/api/plan/from-text" -Method Post -ContentType "application/json" -Body $body
+Invoke-RestMethod -Uri "http://0.0.0.0:5000/api/plan/from-text" -Method Post -ContentType "application/json" -Body $body
 ```
 
 Response contains:
@@ -42,13 +42,13 @@ $pipeline = @{
   )
 } | ConvertTo-Json -Depth 6
 
-Invoke-RestMethod -Uri "http://127.0.0.1:5000/api/automations/dry-run" -Method Post -ContentType "application/json" -Body $pipeline
+Invoke-RestMethod -Uri "http://0.0.0.0:5000/api/automations/dry-run" -Method Post -ContentType "application/json" -Body $pipeline
 ```
 
 ## Execute
 
 ```powershell
-Invoke-RestMethod -Uri "http://127.0.0.1:5000/api/automations/execute" -Method Post -ContentType "application/json" -Body $pipeline
+Invoke-RestMethod -Uri "http://0.0.0.0:5000/api/automations/execute" -Method Post -ContentType "application/json" -Body $pipeline
 ```
 
 ### Notes
