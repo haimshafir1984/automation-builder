@@ -1,4 +1,4 @@
-# render.yaml — מגדיר שירות web אחד מתוך תיקיית backend
+# render.yaml — backend בלבד, בלי Persistent Disk (מתאים לתכנית Free)
 services:
   - type: web
     name: automation-builder-backend
@@ -14,15 +14,10 @@ services:
       - key: NODE_ENV
         value: production
       - key: TOKENS_DIR
-        value: /data/tokens
-      # את השלושה הבאים תמלא בדשבורד אחרי שייווצר הדומיין (או ידנית כאן אם כבר יודע דומיין):
+        value: /tmp/tokens         # אחסון זמני בלבד (יימחק בהפסקות/דפלוי)
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: GOOGLE_CLIENT_SECRET
         sync: false
       - key: GOOGLE_REDIRECT_URI
         sync: false
-    disk:
-      name: tokens
-      mountPath: /data
-      sizeGB: 1
