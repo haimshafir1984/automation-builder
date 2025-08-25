@@ -1,0 +1,28 @@
+# render.yaml — מגדיר שירות web אחד מתוך תיקיית backend
+services:
+  - type: web
+    name: automation-builder-backend
+    rootDir: backend
+    env: node
+    plan: free
+    buildCommand: "npm ci --omit=dev --no-audit --no-fund"
+    startCommand: "node server.js"
+    healthCheckPath: "/health"
+    autoDeploy: true
+    region: frankfurt
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TOKENS_DIR
+        value: /data/tokens
+      # את השלושה הבאים תמלא בדשבורד אחרי שייווצר הדומיין (או ידנית כאן אם כבר יודע דומיין):
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REDIRECT_URI
+        sync: false
+    disk:
+      name: tokens
+      mountPath: /data
+      sizeGB: 1
