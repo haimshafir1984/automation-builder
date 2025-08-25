@@ -1,6 +1,6 @@
 {
   "name": "automation-backend-plus",
-  "version": "1.1.0",
+  "version": "1.1.2",
   "description": "Internal engine backend with extra connectors and triggers",
   "main": "server.js",
   "scripts": {
