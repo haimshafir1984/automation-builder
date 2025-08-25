@@ -1,325 +1,448 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="he" dir="rtl">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Automation Builder · Wizard+</title>
+  <meta charset="utf-8" />
+  <title>Wizard Plus — Chat UI</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    :root {
-      --bg: #0f1115;
-      --panel: #171a21;
-      --muted: #9aa3b2;
-      --text: #e6edf3;
-      --primary: #4cc38a;
-      --danger: #ff6b6b;
-      --warning: #f5a524;
-      --border: #2a2f3a;
-      --accent: #7c86ff;
-      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0; padding: 24px;
-      background: radial-gradient(1200px 600px at 90% -20%, #1a1f2e 0%, transparent 60%), var(--bg);
-      color: var(--text); font-family: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji";
-    }
-    h1 { margin: 0 0 8px; font-size: 28px; }
-    .sub { color: var(--muted); margin-bottom: 24px; }
-    .grid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 20px; align-items: start; }
-    .card {
-      background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
-      border: 1px solid var(--border);
-      border-radius: 14px; padding: 18px;
-      box-shadow: 0 10px 25px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.03);
-    }
-    .card h2 { margin: 0 0 10px; font-size: 18px; }
-    label { display: block; font-size: 14px; color: var(--muted); margin: 12px 0 6px; }
-    input[type="text"], input[type="number"], textarea {
-      width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border);
-      background: #0c0f14; color: var(--text); font-size: 14px; outline: none;
-    }
-    textarea { min-height: 110px; resize: vertical; }
-    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .fade-in { animation: fadein .4s ease; }
+    @keyframes fadein { from {opacity:0; transform: translateY(6px)} to {opacity:1; transform:none} }
+    .bubble{ background:#0b1323; border:1px solid #273244; color:#e5e7eb; }
+    .bubble.user{ background:#121a2b; }
     .btn {
-      display: inline-flex; align-items: center; gap: 8px;
-      background: linear-gradient(180deg, #3dd68c, #12a773);
-      color: #061a11; border: none; font-weight: 700;
-      padding: 10px 14px; border-radius: 10px; cursor: pointer;
-      box-shadow: 0 6px 18px rgba(60, 214, 140, 0.25);
+      appearance:none; border:none; border-radius:12px; padding:12px 16px;
+      background:linear-gradient(135deg,#6366f1,#8b5cf6); color:#fff;
+      cursor:pointer; font-weight:700; letter-spacing:.3px; box-shadow:0 8px 24px rgba(99,102,241,.35);
     }
-    .btn.secondary {
-      background: linear-gradient(180deg, #7c86ff, #4c57ff);
-      color: #fff; box-shadow: 0 6px 18px rgba(124, 134, 255, 0.25);
-    }
-    .btn.ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
-    .btn.danger { background: linear-gradient(180deg, #ff8b8b, #ff5a5a); color: #210b0b; }
-    .btn:disabled { opacity: 0.6; cursor: not-allowed; }
-    .muted { color: var(--muted); font-size: 13px; }
-    .mono { font-family: var(--mono); font-size: 12px; }
-    pre {
-      background: #0c0f14; border: 1px solid var(--border); border-radius: 10px; padding: 12px;
-      overflow: auto; max-height: 320px; white-space: pre-wrap; word-break: break-word;
-    }
-    .pill { display:inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--border); background:#10141c; }
-    .ok { color: var(--primary); }
-    .warn { color: var(--warning); }
-    .bad { color: var(--danger); }
-    .hr { height:1px; background: var(--border); margin: 14px 0; }
-    .footer { margin-top: 18px; display:flex; gap: 10px; flex-wrap: wrap; }
-    a { color: var(--accent); text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    .stack { display:flex; flex-direction: column; gap:8px; }
-    .flex { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-    .hide { display:none; }
+    .btn:hover{ filter:brightness(1.03); }
+    .btn-ghost{ background:transparent; border:1px solid #334155; color:#e5e7eb; box-shadow:none; }
+    .pill{padding:6px 10px;border-radius:999px;font-size:12px;border:1px solid #334155;display:inline-flex;align-items:center;gap:6px;}
+    .pill-ok{background:rgba(16,185,129,.12);border-color:rgba(16,185,129,.3); color:#0bb37b;}
+    .pill-err{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.35); color:#ef4444;}
+    /* תשובות/אינפוטים בבועות */
+    .chat-input { background:#ffffff; color:#111827; border:2px solid #e5e7eb; }
+    .chat-input.missing { border-color:#ef4444; box-shadow:0 0 0 3px rgba(239,68,68,.15); }
+    code { background:#0b1220; padding:2px 6px; border-radius:6px; border:1px solid #1f2937; }
+    .small { font-size:12px; color:#9ca3af }
   </style>
 </head>
-<body>
-  <header class="stack">
-    <h1>🔧 Automation Builder — Wizard+</h1>
-    <div class="sub">הגדר אוטומציה בשפת טבעית, קבל תכנון, Dry-Run, ואז הרצה מלאה—ישירות מהדפדפן.</div>
-  </header>
-
-  <section class="grid">
-    <!-- עמודת האשף -->
-    <div class="card">
-      <h2>1) התחברות לגוגל</h2>
-      <div class="flex">
-        <button id="btnGoogle" class="btn">התחבר עם גוגל</button>
-        <button id="btnStatus" class="btn ghost">בדיקת סטטוס</button>
-        <span id="oauthPill" class="pill muted">ממתין...</span>
-      </div>
-      <div class="muted mono" id="oauthInfo"></div>
-      <div class="hr"></div>
-
-      <h2>2) תיאור האוטומציה (טקסט חופשי)</h2>
-      <label for="freeText">תאר במילים פשוטות מה תרצה (לדוגמה: “כל מייל מ־foo@bar.com שלא נענה 4 שעות → הוסף ל־Google Sheets”)</label>
-      <textarea id="freeText" placeholder="כתבו כאן את הדרישה שלכם..."></textarea>
-
-      <div class="footer">
-        <button id="btnPlan" class="btn secondary">הכנת תכנון (NLP → /api/plan)</button>
-        <button id="btnDryRun" class="btn">Dry-Run</button>
-        <button id="btnExecute" class="btn danger">הרצה (Execute)</button>
-      </div>
-      <div class="muted">* התהליך: תכנון → Dry-Run (לא כותב בפועל) → Execute (מריץ על אמת).</div>
+<body class="min-h-screen bg-gray-100 text-gray-100 flex">
+  <!-- Sidebar -->
+  <aside class="w-64 bg-white text-gray-800 shadow-lg p-6 hidden md:block">
+    <h2 class="text-xl font-bold mb-6">📂 האוטומציות שלי</h2>
+    <ul class="space-y-3">
+      <li class="p-3 bg-blue-100 text-blue-700 rounded-lg font-medium">אוטומציה חדשה</li>
+      <li class="p-3 hover:bg-gray-100 rounded-lg cursor-pointer">SLA מיילים</li>
+      <li class="p-3 hover:bg-gray-100 rounded-lg cursor-pointer">סיכום יומי</li>
+      <li class="p-3 hover:bg-gray-100 rounded-lg cursor-pointer">תבניות WhatsApp</li>
+    </ul>
+    <div class="mt-8">
+      <p class="text-xs text-gray-400">גרסה 0.4 · Prototype</p>
     </div>
+  </aside>
 
-    <!-- עמודת פרטים/תוצאה -->
-    <div class="card">
-      <h2>פרטים משלימים (אם חסר ב־plan)</h2>
+  <!-- Main -->
+  <main class="flex-1 p-6 md:p-10">
+    <!-- Header -->
+    <header class="flex items-center justify-between mb-6">
+      <h1 class="text-2xl font-bold text-gray-800">✨ צור אוטומציה חדשה</h1>
+      <div class="flex items-center gap-3">
+        <span id="g-status" class="pill">טוען…</span>
+        <span id="g-email" class="text-sm text-gray-500"></span>
+        <button id="btn-g-connect" class="px-4 py-2 btn">🔑 התחבר עם Google</button>
+        <button id="btn-g-disconnect" class="px-4 py-2 btn-ghost rounded-lg">התנתק</button>
+      </div>
+    </header>
 
-      <div class="row">
-        <div>
-          <label for="fromEmail">כתובת שולח (fromEmail)</label>
-          <input id="fromEmail" type="text" placeholder="foo@bar.com" />
-        </div>
-        <div>
-          <label for="hours">שעות SLA (hours)</label>
-          <input id="hours" type="number" min="1" max="72" step="1" placeholder="4" />
+    <!-- Composer -->
+    <section class="bg-white text-gray-800 shadow-lg rounded-2xl p-8 max-w-3xl">
+      <label class="block text-sm text-gray-600 mb-2">תאר מה אתה צריך:</label>
+      <textarea id="free-text"
+        class="w-full h-40 border rounded-xl p-4 outline-none focus:ring-2 focus:ring-blue-300 mb-6"
+        placeholder='דוגמה: "כל מייל שהגיע ממשתמש מסוים בחודש האחרון, ולא עניתי לו ב-5 שעות — הוסף לשיטס / שלח לי בוואטסאפ"'></textarea>
+      <div class="flex gap-3">
+        <button id="btn-plan" class="btn">🧭 הפק תכנון</button>
+        <button id="btn-dry" class="btn-ghost px-4 py-2 rounded-xl">🧪 Dry-Run</button>
+        <button id="btn-exec" class="btn-ghost px-4 py-2 rounded-xl">🚀 Execute</button>
+        <button id="btn-debug-nlp" class="btn-ghost px-4 py-2 rounded-xl">🔎 בדיקת NLP</button>
+      </div>
+      <div class="small mt-2">תהליך מומלץ: תכנון → Dry-Run → Execute</div>
+    </section>
+
+    <!-- Chat Section -->
+    <section class="mt-8 max-w-3xl">
+      <div id="chat" class="space-y-3">
+        <!-- בועת פתיחה -->
+        <div class="fade-in flex justify-start">
+          <div class="bubble rounded-2xl px-4 py-3 max-w-[80%]">
+            כתוב מטרה חופשית ולחץ “הפק תכנון”. אני אבין את הכוונה (למשל SLA/לידים/WhatsApp).
+            אם יחסר מידע — אשאל כאן בבועות ואסמן חסרים באדום. ✍️
+          </div>
         </div>
       </div>
-
-      <div class="row">
-        <div>
-          <label for="spreadsheetId">Spreadsheet ID</label>
-          <input id="spreadsheetId" type="text" placeholder="1AbCDefGhIjkLmNoP..." />
-        </div>
-        <div>
-          <label for="tabName">Tab / Sheet name</label>
-          <input id="tabName" type="text" placeholder="SLA" />
-        </div>
-      </div>
-
-      <div class="row">
-        <div>
-          <label for="limit">Limit</label>
-          <input id="limit" type="number" min="1" step="1" placeholder="50" />
-        </div>
-        <div>
-          <label for="newerThanDays">Newer Than (days)</label>
-          <input id="newerThanDays" type="number" min="1" step="1" placeholder="30" />
-        </div>
-      </div>
-
-      <div class="hr"></div>
-      <h2>פלט וניטור</h2>
-      <div class="stack">
-        <div class="mono muted" id="hintsBox">Hints: —</div>
-        <pre id="resultBox">מוכן.</pre>
-      </div>
-    </div>
-  </section>
+    </section>
+  </main>
 
   <script>
-    const $ = (id) => document.getElementById(id);
-    const oauthPill = $("oauthPill");
-    const oauthInfo = $("oauthInfo");
-    const resultBox = $("resultBox");
-    const hintsBox  = $("hintsBox");
-
-    const input = {
-      freeText: $("freeText"),
-      fromEmail: $("fromEmail"),
-      hours: $("hours"),
-      spreadsheetId: $("spreadsheetId"),
-      tabName: $("tabName"),
-      limit: $("limit"),
-      newerThanDays: $("newerThanDays"),
-    };
-
-    function show(obj, title = "") {
-      const txt = (title ? title + "\n" : "") + JSON.stringify(obj, null, 2);
-      resultBox.textContent = txt;
-    }
-    function setPill(txt, cls = "") {
-      oauthPill.textContent = txt;
-      oauthPill.classList.remove("ok", "bad", "warn");
-      if (cls) oauthPill.classList.add(cls);
-    }
-
-    async function googleStatus() {
+    // -------- Config --------
+    const API_BASE = (() => {
       try {
-        const [dbgResp, tokResp] = await Promise.allSettled([
-          fetch("/api/google/debug"),
-          fetch("/api/google/tokens")
-        ]);
+        const loc = window.location;
+        if (loc.protocol === 'file:') return 'http://127.0.0.1:5000';
+        // בענן/לוקאל: נשארים על אותו origin (ללא הוספת :5000 ידנית)
+        return `${loc.protocol}//${loc.host}`;
+      } catch { return 'http://127.0.0.1:5000'; }
+    })();
 
-        let dbg = null, tok = null;
-        if (dbgResp.status === "fulfilled") dbg = await dbgResp.value.json();
-        if (tokResp.status === "fulfilled") tok = await tokResp.value.json();
-
-        const connected = tok && tok.ok && tok.exists;
-        setPill(connected ? "מחובר" : "לא מחובר", connected ? "ok" : "warn");
-
-        oauthInfo.textContent =
-          (dbg ? `CLIENT_ID: ${dbg.env?.GOOGLE_CLIENT_ID}\nREDIRECT_URI: ${dbg.env?.GOOGLE_REDIRECT_URI}\nTOKENS_DIR: ${dbg.env?.TOKENS_DIR}` : "—") +
-          (tok ? `\nTOKENS: ${tok.exists ? "exists" : "missing"} (${tok.path || ""})` : "");
-
-        return { dbg, tok, connected };
-      } catch (e) {
-        setPill("שגיאה", "bad");
-        oauthInfo.textContent = "שגיאה בבדיקת סטטוס: " + e;
-        return { error: e };
-      }
+    // -------- Helpers UI --------
+    function addBubble(text, who='sys') {
+      const chat = document.getElementById('chat');
+      const wrap = document.createElement('div');
+      wrap.className = 'fade-in flex ' + (who==='user' ? 'justify-end' : 'justify-start');
+      const b = document.createElement('div');
+      b.className = 'bubble rounded-2xl px-4 py-3 max-w-[80%] ' + (who==='user' ? 'user' : '');
+      b.innerHTML = text;
+      wrap.appendChild(b);
+      chat.appendChild(wrap);
+      b.scrollIntoView({ behavior:'smooth', block:'end' });
+      return b;
+    }
+    function addInputBubble(placeholder, type='text', widthClass='w-72', markMissing=false) {
+      const chat = document.getElementById('chat');
+      const wrap = document.createElement('div');
+      wrap.className = 'fade-in flex justify-end';
+      const input = document.createElement('input');
+      input.type = type;
+      input.placeholder = placeholder;
+      input.className = `chat-input rounded-2xl p-3 ${widthClass} shadow outline-none focus:ring-2 focus:ring-blue-300`;
+      if (markMissing) input.classList.add('missing');
+      wrap.appendChild(input);
+      chat.appendChild(wrap);
+      input.scrollIntoView({ behavior:'smooth', block:'end' });
+      input.focus();
+      return input;
+    }
+    function addButtonBubble(label, onClick, variant='primary') {
+      const chat = document.getElementById('chat');
+      const wrap = document.createElement('div');
+      wrap.className = 'fade-in flex justify-end';
+      const btn = document.createElement('button');
+      btn.className = (variant==='primary' ? 'btn' : 'btn-ghost') + ' rounded-2xl';
+      btn.textContent = label;
+      btn.onclick = onClick;
+      wrap.appendChild(btn);
+      chat.appendChild(wrap);
+      btn.scrollIntoView({ behavior:'smooth', block:'end' });
+      return btn;
+    }
+    function setGoogleStatus(connected, email) {
+      const s = document.getElementById('g-status');
+      s.textContent = connected ? 'מחובר' : 'לא מחובר';
+      s.className = 'pill ' + (connected ? 'pill-ok' : 'pill-err');
+      document.getElementById('g-email').textContent = connected && email ? `(${email})` : '';
+    }
+    function extractSpreadsheetId(input) {
+      if (!input) return null;
+      if (/^[a-zA-Z0-9-_]{20,}$/.test(input)) return input;
+      const m = String(input).match(/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+      return m ? m[1] : null;
+    }
+    async function safeFetch(url, opts={}) {
+      const r = await fetch(url, opts);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r;
     }
 
+    // -------- OAuth (לעבודה עם ה־Backend הקיים) --------
+    async function refreshGoogleStatus() {
+      try {
+        const [dbgRes, tokRes] = await Promise.all([
+          safeFetch(`${API_BASE}/api/google/debug`).then(r => r.json()).catch(()=>null),
+          safeFetch(`${API_BASE}/api/google/tokens`).then(r => r.json()).catch(()=>null),
+        ]);
+        const connected = !!(tokRes && tokRes.ok && tokRes.exists);
+        setGoogleStatus(connected, null);
+      } catch { setGoogleStatus(false, null); }
+    }
     async function connectGoogle() {
       try {
-        const r = await fetch("/api/google/oauth/url");
+        const r = await safeFetch(`${API_BASE}/api/google/oauth/url`);
         const j = await r.json();
         if (!j.ok || !j.url) {
-          alert("שגיאה בהפקת URL ל-Google OAuth");
-          show(j, "שגיאת OAuth URL");
+          addBubble(`❌ שגיאת OAuth: ${j.error || 'לא התקבל URL'}`);
           return;
         }
-        // הפניה למסך ההרשאות
+        // מפנה ישירות ל-Google (שיטה היציבה ביותר בענן)
         window.location.href = j.url;
       } catch (e) {
-        alert("שגיאת רשת: " + e);
+        addBubble('❌ שגיאת רשת ב-OAuth');
       }
     }
+    async function disconnectGoogle() {
+      addBubble('ℹ️ ניתוק לא נתמך כרגע בפריסה ללא דיסק קבוע. אם נרצה — נוסיף נקודת DELETE לצורך ניקוי טוקנים.');
+      await refreshGoogleStatus();
+    }
 
-    function buildProposalFromInputs(base) {
-      const p = { ...(base || {}) };
-      // נאסוף רק אם מולאו
-      if (input.fromEmail.value.trim())      p.fromEmail = input.fromEmail.value.trim();
-      if (input.hours.value)                 p.hours = Number(input.hours.value);
-      if (input.spreadsheetId.value.trim())  p.spreadsheetId = input.spreadsheetId.value.trim();
-      if (input.tabName.value.trim())        p.tab = input.tabName.value.trim();
-      if (input.limit.value)                 p.limit = Number(input.limit.value);
-      if (input.newerThanDays.value)         p.newerThanDays = Number(input.newerThanDays.value);
-      return p;
+    // -------- Planner / NLP --------
+    let currentProposal = null;
+    let currentType = null;
+
+    const answers = {
+      spreadsheetId: null,
+      tab: null,
+      fromEmail: null,
+      hours: null,
+      keyword: null,
+      limit: null,
+      dateAfter: null,
+      newerThanDays: null,
+      toPhone: null,
+      timeWindowText: null,
+    };
+
+    function askMissingFields(missingList, proposal) {
+      if (!missingList || !missingList.length) {
+        addBubble('✅ יש את כל המידע. תרצה להריץ Dry-Run או Execute?', 'sys');
+        addButtonBubble('🧪 Dry-Run', dryRun, 'primary');
+        addButtonBubble('🚀 Execute', executePlan, 'ghost');
+        return;
+      }
+
+      const next = missingList.shift();
+
+      if (next === 'fromEmail') {
+        addBubble('מה כתובת המייל של השולח (From)?', 'sys');
+        const input = addInputBubble('name@domain.com', 'email', 'w-80', true);
+        addButtonBubble('המשך', () => {
+          const v = input.value.trim();
+          if (!v || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) { addBubble('❌ אימייל לא תקין'); return; }
+          answers.fromEmail = v; input.classList.remove('missing');
+          addBubble(v, 'user');
+          askMissingFields(missingList, proposal);
+        });
+        return;
+      }
+
+      if (next === 'hours') {
+        addBubble('אחרי כמה שעות נחשיב SLA-Violation?', 'sys');
+        const input = addInputBubble('למשל 4', 'number', 'w-32', true);
+        addButtonBubble('המשך', () => {
+          const n = Number(input.value);
+          if (!n || n<=0) { addBubble('❌ מספר שעות לא תקין'); return; }
+          answers.hours = n; input.classList.remove('missing');
+          addBubble(`${n} שעות`, 'user');
+          askMissingFields(missingList, proposal);
+        });
+        return;
+      }
+
+      if (next === 'spreadsheetId') {
+        addBubble('הדבק קישור לגיליון Sheets (או ID):', 'sys');
+        const input = addInputBubble('https://docs.google.com/spreadsheets/d/XXXXX/edit', 'text', 'w-[28rem]', true);
+        addButtonBubble('המשך', () => {
+          const id = extractSpreadsheetId(input.value.trim());
+          if (!id) { addBubble('❌ לא הצלחתי לחלץ Spreadsheet ID'); return; }
+          answers.spreadsheetId = id; input.classList.remove('missing');
+          addBubble(`<code>${id}</code>`, 'user');
+          askMissingFields(missingList, proposal);
+        });
+        return;
+      }
+
+      if (next === 'tab') {
+        addBubble('שם הטאב/דף בגיליון?', 'sys');
+        const input = addInputBubble('SLA', 'text', 'w-48', true);
+        addButtonBubble('המשך', () => {
+          const t = input.value.trim() || 'SLA';
+          answers.tab = t; input.classList.remove('missing');
+          addBubble(`Tab: <b>${t}</b>`, 'user');
+          askMissingFields(missingList, proposal);
+        });
+        return;
+      }
+
+      if (next === 'limit') {
+        addBubble('כמה להביא בכל ריצה (limit)?', 'sys');
+        const input = addInputBubble('50', 'number', 'w-28', true);
+        addButtonBubble('המשך', () => {
+          const n = Number(input.value) || 50;
+          answers.limit = n; input.classList.remove('missing');
+          addBubble(`Limit: <b>${n}</b>`, 'user');
+          askMissingFields(missingList, proposal);
+        });
+        return;
+      }
+
+      if (next === 'newerThanDays') {
+        addBubble('לכמה ימים אחורה לחפש?', 'sys');
+        const input = addInputBubble('30', 'number', 'w-28', true);
+        addButtonBubble('המשך', () => {
+          const n = Number(input.value) || 30;
+          answers.newerThanDays = n; input.classList.remove('missing');
+          addBubble(`NewerThanDays: <b>${n}</b>`, 'user');
+          askMissingFields(missingList, proposal);
+        });
+        return;
+      }
+
+      if (next === 'toPhone') {
+        addBubble('מספר WhatsApp ליעד (+972…)?', 'sys');
+        const input = addInputBubble('+972501234567', 'text', 'w-60', true);
+        addButtonBubble('המשך', () => {
+          const p = input.value.trim().replace(/\s|-/g,'');
+          if (!p) { addBubble('❌ מספר חסר'); return; }
+          answers.toPhone = p; input.classList.remove('missing');
+          addBubble(p, 'user');
+          askMissingFields(missingList, proposal);
+        });
+        return;
+      }
+
+      // fallback
+      addBubble(`⚠️ שדה נדרש: ${next} — הזן כעת:`, 'sys');
+      const input = addInputBubble('ערך...', 'text', 'w-64', true);
+      addButtonBubble('המשך', () => {
+        const v = input.value.trim();
+        if (!v) { addBubble('❌ ערך חסר'); return; }
+        input.classList.remove('missing');
+        addBubble(v, 'user');
+        askMissingFields(missingList, proposal);
+      });
+    }
+
+    function buildPayloadFor(type, proposalBase) {
+      const p = { ...(proposalBase || {}), ...answers };
+      if (type === 'sla-simple') {
+        const { fromEmail, hours, spreadsheetId } = p;
+        if (!fromEmail || !hours || !spreadsheetId) {
+          addBubble('❌ חסרים פרטים להרצה (fromEmail/hours/spreadsheetId)');
+          return null;
+        }
+        p.tab = p.tab || 'SLA';
+        p.limit = p.limit || 100;
+        return { type: 'sla-simple', proposal: p };
+      }
+      // אפשר להרחיב ל־lead-intake וכו׳ בהמשך
+      return { type, proposal: p };
     }
 
     async function planFromText() {
-      const text = input.freeText.value.trim();
-      if (!text) { alert("נא להזין תיאור טקסט חופשי"); return; }
+      const text = (document.getElementById('free-text').value || '').trim();
+      if (!text) { addBubble('❌ כתוב מטרה חופשית בתיבה למעלה'); return; }
+      addBubble(text, 'user');
 
-      show({ status: "⏳ שולח ל- /api/plan", text });
-      hintsBox.textContent = "Hints: —";
+      try {
+        const r = await safeFetch(`${API_BASE}/api/plan`, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ text })
+        });
+        const j = await r.json();
+        if (!j.ok) { addBubble(`❌ ${j.error || 'שגיאה ב־/api/plan'}`); return; }
 
-      const body = { text };
-      const r = await fetch("/api/plan", {
-        method: "POST",
-        headers: { "Content-Type":"application/json" },
-        body: JSON.stringify(body)
-      });
-      const j = await r.json();
+        currentProposal = j.proposal || {};
+        currentType = j.type || currentProposal.type || 'sla-simple';
 
-      // הצג תשובה
-      show(j, "תכנון (plan)");
-      if (j?.hints) hintsBox.textContent = "Hints: " + JSON.stringify(j.hints);
+        // פרה־אכלוס תשובות
+        Object.assign(answers, {
+          spreadsheetId: currentProposal.spreadsheetId || null,
+          tab: currentProposal.tab || null,
+          fromEmail: currentProposal.fromEmail || null,
+          hours: currentProposal.hours || null,
+          limit: currentProposal.limit || null,
+          newerThanDays: currentProposal.newerThanDays || null,
+          toPhone: currentProposal.toPhone || null,
+        });
 
-      // אם חסרים שדות — נסמן למשתמש
-      if (Array.isArray(j?.missing) && j.missing.length) {
-        const m = j.missing.join(", ");
-        hintsBox.textContent += `\nחסרים: ${m}`;
+        addBubble(`📋 תכנון מוכן · סוג: <b>${currentType}</b><br><span class="small">אם חסר מידע אדריך כאן להשלים</span>`, 'sys');
+
+        let missing = (j.missing || []).slice();
+        // אם זוהתה כוונת WhatsApp – דואגים לשדה מספר יעד
+        if (currentType === 'whatsapp-notify' && !answers.toPhone && !missing.includes('toPhone')) {
+          missing.unshift('toPhone');
+        }
+        if (missing.length) {
+          addBubble(`נדרשים פרטים משלימים: <code>${missing.join(', ')}</code>`, 'sys');
+          askMissingFields(missing, currentProposal);
+        } else {
+          addBubble('✅ יש את כל המידע — תרצה Dry-Run או Execute?', 'sys');
+          addButtonBubble('🧪 Dry-Run', dryRun, 'primary');
+          addButtonBubble('🚀 Execute', executePlan, 'ghost');
+        }
+      } catch (e) {
+        addBubble('❌ שגיאת רשת ב־/api/plan');
       }
-
-      // נשמור את התכנון האחרון בזיכרון העמוד
-      window.__lastPlan = j;
-    }
-
-    function buildPipelineForRun() {
-      const last = window.__lastPlan || null;
-      // ברירת מחדל למקרה שאין plan: ננסה "sla-simple"
-      let type = "sla-simple";
-      let baseProposal = {};
-
-      if (last && last.type) {
-        // /api/plan יכול להחזיר { type: 'pipeline', proposal: {...} } או type ספציפי
-        type = last.type === "pipeline" && last.proposal?.type
-          ? last.proposal.type
-          : last.type;
-        baseProposal = last.proposal || {};
-      }
-
-      const proposal = buildProposalFromInputs(baseProposal);
-
-      return { type, proposal };
     }
 
     async function dryRun() {
-      const pipeline = buildPipelineForRun();
-      show({ status: "⏳ Dry-Run...", pipeline });
-
-      const r = await fetch("/api/automations/dry-run", {
-        method: "POST",
-        headers: { "Content-Type":"application/json" },
-        body: JSON.stringify(pipeline)
-      });
-      const j = await r.json();
-      show(j, "Dry-Run");
-    }
-
-    async function execute() {
-      const pipeline = buildPipelineForRun();
-      show({ status: "⏳ Execute...", pipeline });
-
-      const r = await fetch("/api/automations/execute", {
-        method: "POST",
-        headers: { "Content-Type":"application/json" },
-        body: JSON.stringify(pipeline)
-      });
-      const j = await r.json();
-      show(j, "Execute");
-    }
-
-    // אירועים
-    $("btnGoogle").addEventListener("click", connectGoogle);
-    $("btnStatus").addEventListener("click", googleStatus);
-    $("btnPlan").addEventListener("click", planFromText);
-    $("btnDryRun").addEventListener("click", dryRun);
-    $("btnExecute").addEventListener("click", execute);
-
-    // אתחול מסך
-    (async () => {
-      await googleStatus();
-      // דוגמת טקסט התחלתית
-      if (!input.freeText.value) {
-        input.freeText.value = "כל מייל מכתובת foo@bar.com שלא נענה במשך 4 שעות – הוסף שורה ל-Google Sheets בטאב SLA";
+      if (!currentType) { addBubble('❌ אין תכנון פעיל'); return; }
+      const payload = buildPayloadFor(currentType, currentProposal);
+      if (!payload) return;
+      try {
+        const r = await safeFetch(`${API_BASE}/api/automations/dry-run`, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(payload)
+        });
+        const j = await r.json();
+        if (!j.ok) { addBubble(`❌ ${j.message || j.error || 'שגיאה ב־Dry-Run'}`); return; }
+        addBubble(`🧪 Dry-Run הושלם: <code>${JSON.stringify(j.summary || j).replace(/</g,'&lt;')}</code>`, 'sys');
+      } catch {
+        addBubble('❌ שגיאה ב־Dry-Run');
       }
-      // אם הידעת מזהה Production, אפשר להשאיר הכל כמו שהוא — הנתיבים יחסיים.
-    })();
+    }
+
+    async function executePlan() {
+      if (!currentType) { addBubble('❌ אין תכנון פעיל'); return; }
+
+      if (currentType === 'whatsapp-notify') {
+        addBubble(`ℹ️ זיהיתי WhatsApp. בפריסה הנוכחית אינטגרציית WhatsApp לא מחוברת עדיין.
+        אפשר:
+        <br>1) לחבר Twilio / Meta Cloud API
+        <br>2) או לשמור זמנית ל-Google Sheets/מייל`, 'sys');
+        return;
+      }
+
+      const payload = buildPayloadFor(currentType, currentProposal);
+      if (!payload) return;
+
+      try {
+        const r = await safeFetch(`${API_BASE}/api/automations/execute`, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(payload)
+        });
+        const j = await r.json();
+        if (!j.ok) { addBubble(`❌ ${j.message || j.error || 'שגיאה בהרצה'}`); return; }
+        addBubble(`✅ בוצע! <code>${JSON.stringify(j.summary || j).replace(/</g,'&lt;')}</code>`, 'sys');
+      } catch {
+        addBubble('❌ שגיאת רשת ב־Execute');
+      }
+    }
+
+    // -------- Events --------
+    document.getElementById('btn-g-connect').onclick = connectGoogle;
+    document.getElementById('btn-g-disconnect').onclick = disconnectGoogle;
+    document.getElementById('btn-plan').onclick = planFromText;
+    document.getElementById('btn-dry').onclick = dryRun;
+    document.getElementById('btn-exec').onclick = executePlan;
+
+    // NLP debug (רשות)
+    document.getElementById('btn-debug-nlp').onclick = async () => {
+      const text = (document.getElementById('free-text').value || '').trim();
+      if (!text) { addBubble('❌ כתוב מטרה חופשית בתיבה למעלה'); return; }
+      addBubble('🔎 מריץ /api/nlp/parse…', 'sys');
+      try {
+        const res = await safeFetch(`${API_BASE}/api/nlp/parse`, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ text })
+        });
+        const j = await res.json();
+        addBubble(`NLP: <code>${j.intent || '—'}</code> · Provider: <code>${j.provider || '—'}</code>
+          <pre class="text-xs mt-2"><code>${JSON.stringify(j, null, 2).replace(/</g,'&lt;')}</code></pre>`, 'sys');
+      } catch { addBubble('❌ שגיאת NLP'); }
+    };
+
+    // init
+    refreshGoogleStatus();
   </script>
 </body>
 </html>
