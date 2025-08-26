@@ -20,7 +20,6 @@
     .pill{padding:6px 10px;border-radius:999px;font-size:12px;border:1px solid #334155;display:inline-flex;align-items:center;gap:6px;}
     .pill-ok{background:rgba(16,185,129,.12);border-color:rgba(16,185,129,.3); color:#0bb37b;}
     .pill-err{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.35); color:#ef4444;}
-    /* תשובות/אינפוטים בבועות */
     .chat-input { background:#ffffff; color:#111827; border:2px solid #e5e7eb; }
     .chat-input.missing { border-color:#ef4444; box-shadow:0 0 0 3px rgba(239,68,68,.15); }
     code { background:#0b1220; padding:2px 6px; border-radius:6px; border:1px solid #1f2937; }
@@ -28,7 +27,7 @@
   </style>
 </head>
 <body class="min-h-screen bg-gray-100 text-gray-100 flex">
-  <!-- Sidebar -->
+  <!-- Sidebar (עיצוב מקורי) -->
   <aside class="w-64 bg-white text-gray-800 shadow-lg p-6 hidden md:block">
     <h2 class="text-xl font-bold mb-6">📂 האוטומציות שלי</h2>
     <ul class="space-y-3">
@@ -60,7 +59,7 @@
       <label class="block text-sm text-gray-600 mb-2">תאר מה אתה צריך:</label>
       <textarea id="free-text"
         class="w-full h-40 border rounded-xl p-4 outline-none focus:ring-2 focus:ring-blue-300 mb-6"
-        placeholder='דוגמה: "כל מייל שהגיע ממשתמש מסוים בחודש האחרון, ולא עניתי לו ב-5 שעות — הוסף לשיטס / שלח לי בוואטסאפ"'></textarea>
+        placeholder='דוגמה: "כל מייל שהגיע ממשתמש מסוים בחודש האחרון, ולא עניתי לו ב-5 שעות — הוסף לשיטס וגם שלח לי וואטסאפ"'></textarea>
       <div class="flex gap-3">
         <button id="btn-plan" class="btn">🧭 הפק תכנון</button>
         <button id="btn-dry" class="btn-ghost px-4 py-2 rounded-xl">🧪 Dry-Run</button>
@@ -73,11 +72,9 @@
     <!-- Chat Section -->
     <section class="mt-8 max-w-3xl">
       <div id="chat" class="space-y-3">
-        <!-- בועת פתיחה -->
         <div class="fade-in flex justify-start">
           <div class="bubble rounded-2xl px-4 py-3 max-w-[80%]">
-            כתוב מטרה חופשית ולחץ “הפק תכנון”. אני אבין את הכוונה (למשל SLA/לידים/WhatsApp).
-            אם יחסר מידע — אשאל כאן בבועות ואסמן חסרים באדום. ✍️
+            כתוב מטרה חופשית ולחץ “הפק תכנון”. אם יחסר מידע — אשאל כאן בבועות ואסמן חסרים באדום. ✍️
           </div>
         </div>
       </div>
@@ -85,17 +82,16 @@
   </main>
 
   <script>
-    // -------- Config --------
+    // ---------- Config ----------
     const API_BASE = (() => {
       try {
         const loc = window.location;
         if (loc.protocol === 'file:') return 'http://127.0.0.1:5000';
-        // בענן/לוקאל: נשארים על אותו origin (ללא הוספת :5000 ידנית)
         return `${loc.protocol}//${loc.host}`;
       } catch { return 'http://127.0.0.1:5000'; }
     })();
 
-    // -------- Helpers UI --------
+    // ---------- UI helpers ----------
     function addBubble(text, who='sys') {
       const chat = document.getElementById('chat');
       const wrap = document.createElement('div');
@@ -154,7 +150,7 @@
       return r;
     }
 
-    // -------- OAuth (לעבודה עם ה־Backend הקיים) --------
+    // ---------- OAuth ----------
     async function refreshGoogleStatus() {
       try {
         const [dbgRes, tokRes] = await Promise.all([
@@ -169,24 +165,19 @@
       try {
         const r = await safeFetch(`${API_BASE}/api/google/oauth/url`);
         const j = await r.json();
-        if (!j.ok || !j.url) {
-          addBubble(`❌ שגיאת OAuth: ${j.error || 'לא התקבל URL'}`);
-          return;
-        }
-        // מפנה ישירות ל-Google (שיטה היציבה ביותר בענן)
-        window.location.href = j.url;
-      } catch (e) {
-        addBubble('❌ שגיאת רשת ב-OAuth');
-      }
+        if (!j.ok || !j.url) { addBubble(`❌ שגיאת OAuth`); return; }
+        window.location.href = j.url; // מפנה למסך ההרשאות
+      } catch { addBubble('❌ שגיאת רשת ב-OAuth'); }
     }
     async function disconnectGoogle() {
-      addBubble('ℹ️ ניתוק לא נתמך כרגע בפריסה ללא דיסק קבוע. אם נרצה — נוסיף נקודת DELETE לצורך ניקוי טוקנים.');
+      addBubble('ℹ️ ניתוק לא נתמך כרגע בפריסה ללא דיסק קבוע.');
       await refreshGoogleStatus();
     }
 
-    // -------- Planner / NLP --------
+    // ---------- State ----------
     let currentProposal = null;
     let currentType = null;
+    let currentPipeline = null; // אם חזר pipeline מלא
 
     const answers = {
       spreadsheetId: null,
@@ -201,6 +192,10 @@
       timeWindowText: null,
     };
 
+    function isPipelineResponse(j) {
+      return j && (j.type === 'pipeline' || (j.proposal && j.proposal.type === 'pipeline') || j.pipeline);
+    }
+
     function askMissingFields(missingList, proposal) {
       if (!missingList || !missingList.length) {
         addBubble('✅ יש את כל המידע. תרצה להריץ Dry-Run או Execute?', 'sys');
@@ -208,7 +203,6 @@
         addButtonBubble('🚀 Execute', executePlan, 'ghost');
         return;
       }
-
       const next = missingList.shift();
 
       if (next === 'fromEmail') {
@@ -311,20 +305,43 @@
       });
     }
 
-    function buildPayloadFor(type, proposalBase) {
-      const p = { ...(proposalBase || {}), ...answers };
-      if (type === 'sla-simple') {
-        const { fromEmail, hours, spreadsheetId } = p;
-        if (!fromEmail || !hours || !spreadsheetId) {
-          addBubble('❌ חסרים פרטים להרצה (fromEmail/hours/spreadsheetId)');
-          return null;
+    function buildPayloadForCurrent() {
+      // אם יש לנו pipeline מלא — נזריק תשובות לתוך ה־steps ונשלח כפי שהוא
+      if (currentPipeline && currentPipeline.type === 'pipeline' && Array.isArray(currentPipeline.steps)) {
+        const filled = JSON.parse(JSON.stringify(currentPipeline));
+        for (const s of filled.steps) {
+          if (!s.params) continue;
+          for (const k of Object.keys(s.params)) {
+            if (typeof s.params[k] === 'string') {
+              s.params[k] = s.params[k]
+                .replace(/\$\{spreadsheetId\}/g, answers.spreadsheetId || '')
+                .replace(/\$\{tab\}/g, answers.tab || '')
+                .replace(/\$\{fromEmail\}/g, answers.fromEmail || '')
+                .replace(/\$\{hours\}/g, String(answers.hours ?? ''))
+                .replace(/\$\{limit\|?(\d+)?\}/g, String(answers.limit ?? RegExp.$1 ?? '50'))
+                .replace(/\$\{newerThanDays\|?(\d+)?\}/g, String(answers.newerThanDays ?? RegExp.$1 ?? '30'))
+                .replace(/\$\{toPhone\}/g, answers.toPhone || '');
+            }
+          }
         }
+        return { pipeline: filled };
+      }
+
+      // אחרת — מודל פשוט (למשל sla-simple)
+      if (currentType === 'sla-simple') {
+        const p = { ...(currentProposal || {}), ...answers };
+        if (!p.fromEmail || !p.hours || !p.spreadsheetId) return null;
         p.tab = p.tab || 'SLA';
         p.limit = p.limit || 100;
         return { type: 'sla-simple', proposal: p };
       }
-      // אפשר להרחיב ל־lead-intake וכו׳ בהמשך
-      return { type, proposal: p };
+
+      // ברירת מחדל אם יש type
+      if (currentType) {
+        const p = { ...(currentProposal || {}), ...answers };
+        return { type: currentType, proposal: p };
+      }
+      return null;
     }
 
     async function planFromText() {
@@ -341,9 +358,10 @@
         if (!j.ok) { addBubble(`❌ ${j.error || 'שגיאה ב־/api/plan'}`); return; }
 
         currentProposal = j.proposal || {};
-        currentType = j.type || currentProposal.type || 'sla-simple';
+        currentType = j.type || currentProposal.type || null;
+        currentPipeline = null;
+        if (isPipelineResponse(j)) currentPipeline = j.pipeline || j.proposal || j;
 
-        // פרה־אכלוס תשובות
         Object.assign(answers, {
           spreadsheetId: currentProposal.spreadsheetId || null,
           tab: currentProposal.tab || null,
@@ -354,13 +372,13 @@
           toPhone: currentProposal.toPhone || null,
         });
 
-        addBubble(`📋 תכנון מוכן · סוג: <b>${currentType}</b><br><span class="small">אם חסר מידע אדריך כאן להשלים</span>`, 'sys');
+        addBubble(`📋 תכנון מוכן · סוג: <b>${currentType || (currentPipeline ? 'pipeline' : '—')}</b>`, 'sys');
 
         let missing = (j.missing || []).slice();
-        // אם זוהתה כוונת WhatsApp – דואגים לשדה מספר יעד
         if (currentType === 'whatsapp-notify' && !answers.toPhone && !missing.includes('toPhone')) {
           missing.unshift('toPhone');
         }
+
         if (missing.length) {
           addBubble(`נדרשים פרטים משלימים: <code>${missing.join(', ')}</code>`, 'sys');
           askMissingFields(missing, currentProposal);
@@ -369,15 +387,12 @@
           addButtonBubble('🧪 Dry-Run', dryRun, 'primary');
           addButtonBubble('🚀 Execute', executePlan, 'ghost');
         }
-      } catch (e) {
-        addBubble('❌ שגיאת רשת ב־/api/plan');
-      }
+      } catch { addBubble('❌ שגיאת רשת ב־/api/plan'); }
     }
 
     async function dryRun() {
-      if (!currentType) { addBubble('❌ אין תכנון פעיל'); return; }
-      const payload = buildPayloadFor(currentType, currentProposal);
-      if (!payload) return;
+      const payload = buildPayloadForCurrent();
+      if (!payload) { addBubble('❌ אין payload תקין'); return; }
       try {
         const r = await safeFetch(`${API_BASE}/api/automations/dry-run`, {
           method:'POST', headers:{'Content-Type':'application/json'},
@@ -385,27 +400,20 @@
         });
         const j = await r.json();
         if (!j.ok) { addBubble(`❌ ${j.message || j.error || 'שגיאה ב־Dry-Run'}`); return; }
-        addBubble(`🧪 Dry-Run הושלם: <code>${JSON.stringify(j.summary || j).replace(/</g,'&lt;')}</code>`, 'sys');
-      } catch {
-        addBubble('❌ שגיאה ב־Dry-Run');
-      }
+        addBubble(`🧪 Dry-Run: <code>${JSON.stringify(j.summary || j).replace(/</g,'&lt;')}</code>`, 'sys');
+      } catch { addBubble('❌ שגיאת רשת ב־Dry-Run'); }
     }
 
     async function executePlan() {
-      if (!currentType) { addBubble('❌ אין תכנון פעיל'); return; }
+      const payload = buildPayloadForCurrent();
+      if (!payload) { addBubble('❌ אין payload תקין'); return; }
 
-      if (currentType === 'whatsapp-notify') {
-        addBubble(`ℹ️ זיהיתי WhatsApp. בפריסה הנוכחית אינטגרציית WhatsApp לא מחוברת עדיין.
-        אפשר:
-        <br>1) לחבר Twilio / Meta Cloud API
-        <br>2) או לשמור זמנית ל-Google Sheets/מייל`, 'sys');
-        return;
-      }
-
-      const payload = buildPayloadFor(currentType, currentProposal);
-      if (!payload) return;
-
+      // אם יש שלב WhatsApp ואין אינטגרציה בענן — הסבר:
       try {
+        const hasWhatsapp = JSON.stringify(payload).includes('"whatsapp');
+        if (hasWhatsapp) {
+          addBubble(`ℹ️ זוהה שלב WhatsApp. בפריסה הנוכחית (Free) אין חיבור פעיל ל־WhatsApp. אפשר לבצע את שאר השלבים או להחליף זמנית בשליחת Email.`, 'sys');
+        }
         const r = await safeFetch(`${API_BASE}/api/automations/execute`, {
           method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify(payload)
@@ -413,19 +421,16 @@
         const j = await r.json();
         if (!j.ok) { addBubble(`❌ ${j.message || j.error || 'שגיאה בהרצה'}`); return; }
         addBubble(`✅ בוצע! <code>${JSON.stringify(j.summary || j).replace(/</g,'&lt;')}</code>`, 'sys');
-      } catch {
-        addBubble('❌ שגיאת רשת ב־Execute');
-      }
+      } catch { addBubble('❌ שגיאת רשת ב־Execute'); }
     }
 
-    // -------- Events --------
+    // Events
     document.getElementById('btn-g-connect').onclick = connectGoogle;
     document.getElementById('btn-g-disconnect').onclick = disconnectGoogle;
     document.getElementById('btn-plan').onclick = planFromText;
     document.getElementById('btn-dry').onclick = dryRun;
     document.getElementById('btn-exec').onclick = executePlan;
 
-    // NLP debug (רשות)
     document.getElementById('btn-debug-nlp').onclick = async () => {
       const text = (document.getElementById('free-text').value || '').trim();
       if (!text) { addBubble('❌ כתוב מטרה חופשית בתיבה למעלה'); return; }
