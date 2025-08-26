@@ -1,59 +1,102 @@
 // backend/routes/nlp.js
 const express = require('express');
-const fetch = require('node-fetch'); // אם אין: npm i node-fetch@2
+const fetch = require('node-fetch'); // npm i node-fetch@2
 const router = express.Router();
 
-// --- כלי עזר קטנים ---
-function extractEmail(text) {
-  const m = String(text).match(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i);
-  return m ? m[0] : null;
-}
-function extractHours(text) {
-  // מספר לפני/אחרי "שעות" או "hours"
-  const m1 = String(text).match(/(\d{1,3})\s*(שעות|שעה)/i);
-  const m2 = String(text).match(/(hours?)\s*(\d{1,3})/i);
-  const n = m1 ? parseInt(m1[1], 10) : (m2 ? parseInt(m2[2], 10) : null);
-  return (Number.isFinite(n) && n > 0) ? n : null;
-}
-function detectIntentHeuristic(text) {
-  const t = (text || '').toLowerCase();
-  const hasWhats = /וואטסאפ|whatsapp/.test(t);
-  const hasLead  = /ליד|lead\b/.test(t);
-  const hasSla   = /sla|לא נענ(ה|ו)|unrepl(ied|y)/.test(t);
+// --- ENV ---
+const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434';
+const OLLAMA_MODEL    = process.env.OLLAMA_MODEL || 'llama3.2';
 
-  if (hasWhats && hasSla) return 'whatsapp-notify';
-  if (hasLead) return 'lead-intake';
-  if (hasSla) return 'sla-simple';
+// --- Helpers ---
+const asJson = (s) => {
+  try { return JSON.parse(s); } catch (_e) { return null; }
+};
+
+// normalize model output that might include text around the JSON
+function extractJsonBlock(s) {
+  if (!s) return null;
+  // try direct
+  let j = asJson(s.trim());
+  if (j) return j;
+
+  // try to find the last {...} block
+  const start = s.lastIndexOf('{');
+  const end = s.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    const maybe = s.slice(start, end + 1);
+    return asJson(maybe);
+  }
   return null;
 }
 
-// --- NLP דמה/אולמה ---
-router.post('/parse', express.json(), async (req, res) => {
-  const text = (req.body?.text || '').trim();
-  // אם יש לך Ollama רץ מקומית ורצית באמת לקרוא אליו — אפשר דרך /nlp/ollama-direct
-  // כרגע נשתמש בחוקים כדי לא לחסום את ה־plan.
-  const intent = detectIntentHeuristic(text);
-  const entities = {
-    fromEmail: extractEmail(text),
-    hours: extractHours(text),
-  };
-  const confidence = intent ? 0.7 : 0.0;
-  return res.json({ ok: true, provider: 'heuristic', intent, entities, confidence });
-});
+const SCHEMA_EXAMPLE = {
+  intent: "automation.plan",
+  confidence: 0.0,
+  entities: {},
+  steps: [
+    { trigger: { type: "gmail.unreplied", params: { fromEmail: "foo@bar.com", hours: 4, limit: 50 } } },
+    { action:  { type: "sheets.append",   params: { spreadsheetId: "xxx", sheetName: "SLA", row: { a: 1 } } } },
+    { action:  { type: "whatsapp.send",   params: { to: "+972...", template: "sla_breach_basic" } } }
+  ]
+};
 
-// אופציונלי: פרוקסי ל-Ollama (לא חובה בשביל הזרימה)
+const SYSTEM_PROMPT = `You are an automation planner. You MUST answer ONLY with strict JSON (no markdown fences, no prose).
+The JSON schema is:
+${JSON.stringify(SCHEMA_EXAMPLE)}
+
+Rules:
+- "steps" is REQUIRED and is an ordered array.
+- Use one TRIGGER max; rest are ACTIONS.
+- If missing required params, still include the step and set those params to null, so the backend can ask for them.
+- Only use known types: gmail.unreplied, sheets.append, whatsapp.send, telegram.send, email.send, http.post
+- Confidence is 0..1 float.
+- The reply must be ONLY the JSON.`;
+
+// --- Endpoints ---
+
+// Simple passthrough for quick checks
 router.get('/ollama-direct', async (req, res) => {
   const text = (req.query?.text || '').trim();
   try {
-    const r = await fetch('http://127.0.0.1:11434/api/generate', {
+    const r = await fetch(`${OLLAMA_BASE_URL}/api/generate`, {
       method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ model: 'llama3.1', prompt: `intent+entities for: ${text}` })
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: OLLAMA_MODEL,
+        prompt: text || 'ping',
+        stream: false
+      })
     });
-    const data = await r.text(); // Ollama מחזיר stream שורה-שורה; לשם פשטות נחזיר raw
-    return res.json({ ok: true, provider: 'ollama', raw: data });
+    const data = await r.json(); // {response, ...}
+    return res.json({ ok: true, provider: 'ollama', data });
   } catch (e) {
-    return res.status(200).json({ ok: true, provider: 'ollama', error: e.message, intent: null, entities: {}, confidence: 0 });
+    return res.status(200).json({ ok: false, provider: 'ollama', error: e.message });
+  }
+});
+
+// Main: turn free text into steps (multi-action)
+router.post('/parse', async (req, res) => {
+  const text = (req.body?.text || '').trim();
+  if (!text) return res.status(400).json({ ok: false, error: 'text is required' });
+
+  try {
+    const r = await fetch(`${OLLAMA_BASE_URL}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: OLLAMA_MODEL,
+        prompt: `${SYSTEM_PROMPT}\n\nUSER:\n${text}`,
+        stream: false
+      })
+    });
+    const j = await r.json(); // {response: "..."}
+    const parsed = extractJsonBlock(j?.response || '');
+    if (!parsed || !Array.isArray(parsed.steps)) {
+      return res.status(200).json({ ok: false, error: 'LLM did not return valid steps', raw: j });
+    }
+    return res.json({ ok: true, provider: 'ollama', plan: parsed });
+  } catch (e) {
+    return res.status(200).json({ ok: false, error: e.message });
   }
 });
 

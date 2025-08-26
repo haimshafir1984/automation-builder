@@ -144,6 +144,8 @@ function resolveAdapter(type) {
    Helpers: legacy → pipeline
    ======================================================= */
 function toPipeline(body) {
+  // accept either {steps:[]} or {proposal:{steps:[]}}
+  if (Array.isArray(body?.proposal?.steps)) return { steps: body.proposal.steps };
   if (Array.isArray(body?.steps)) return body; // already pipeline
 
   const { type, proposal = {} } = body || {};

@@ -1,105 +1,119 @@
 // backend/routes/plan.js
 const express = require('express');
+const fetch = require('node-fetch');
 const router = express.Router();
 
-// ===== עזרי ניתוח טקסט =====
-function extractEmail(text){ const m=String(text).match(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i); return m?m[0]:null; }
-function extractHours(text){
-  const m1=String(text).match(/(\d{1,3})\s*(שעות|שעה)/i);
-  const m2=String(text).match(/(hours?)\s*(\d{1,3})/i);
-  const n = m1 ? parseInt(m1[1],10) : (m2 ? parseInt(m2[2],10) : null);
-  return (Number.isFinite(n) && n>0) ? n : null;
-}
-function has(text, re){ return re.test((text||'').toLowerCase()); }
-function extractNewerThanDays(text){
-  if (has(text,/חודש האחרון|last month|in the last month/)) return 30;
-  if (has(text,/\b(?:30|31)\s*days?\b/)) return 30;
-  if (has(text,/שבוע האחרון|last week/)) return 7;
-  return null;
+const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434';
+const OLLAMA_MODEL    = process.env.OLLAMA_MODEL || 'llama3.2';
+
+// --- Heuristic helpers (fallback when Ollama not available) ---
+function toLowerSafe(s){ return String(s || '').toLowerCase(); }
+
+function detectEntities(text){
+  const t = toLowerSafe(text);
+
+  const emailMatch = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  const fromEmail = emailMatch ? emailMatch[0] : null;
+
+  const phoneMatch = text.match(/(\+?\d{8,15})/);
+  const toPhone = phoneMatch ? phoneMatch[0] : null;
+
+  const hoursMatch = t.match(/(\d{1,3})\s*(שעות|שעה|hours?)/);
+  const hours = hoursMatch ? Number(hoursMatch[1]) : null;
+
+  const hasWhatsapp = /וואטסאפ|whatsapp/.test(t);
+  const hasSheets   = /גוגל.?שיט|שיט|sheets|google.?sheets/.test(t);
+
+  const sheetIdMatch = text.match(/[A-Za-z0-9-_]{20,}/);
+  const spreadsheetId = sheetIdMatch ? sheetIdMatch[0] : null;
+
+  return { fromEmail, toPhone, hours, hasWhatsapp, hasSheets, spreadsheetId };
 }
 
-// ===== Detect intent =====
-function detectIntent(text){
-  const t=(text||'').toLowerCase();
-  const whats = /וואטסאפ|whatsapp/.test(t);
-  const lead  = /ליד|lead\b/.test(t);
-  const sla   = /sla|לא נענ(ה|ו)|unrepl(ied|y)/.test(t);
-  if (whats && sla) return 'whatsapp-notify';
-  if (lead) return 'lead-intake';
-  if (sla) return 'sla-simple';
-  return null;
-}
-
-// ===== Builders =====
-function buildSlaPipeline({ fromEmail, hours, newerThanDays }) {
-  const trigger = { type:'gmail.unreplied', params:{ fromEmail, hours } };
-  if (newerThanDays) trigger.params.newerThanDays = newerThanDays;
-  const action  = { type:'sheets.append', params:{ spreadsheetId:null, sheetName:'SLA', columns:['from','subject','date'] } };
-  return { type:'pipeline', steps:[ {trigger}, {action} ] };
-}
-
-function buildLeadIntakePipeline() {
-  const q = 'in:anywhere (subject:"ליד" OR subject:Lead) -in:chats';
-  const trigger = { type:'gmail.search', params:{ q, limit:50 } };
-  const action  = { type:'sheets.append', params:{ spreadsheetId:null, sheetName:'Leads', columns:['from','subject','date'] } };
-  return { type:'pipeline', steps:[ {trigger}, {action} ] };
-}
-
-function buildWhatsappNotifyPipeline({ fromEmail, hours }) {
-  const trigger = { type:'gmail.unreplied', params:{ fromEmail, hours } };
-  // אם אין לך וואטסאפ עדיין—תוכל להחליף ל-sheets.append, או slack.webhook
-  const action  = { type:'whatsapp.send', params:{ to:null, text:'עבר SLA של {{hours}}h ממייל {{from}}: {{subject}}' } };
-  return { type:'pipeline', steps:[ {trigger}, {action} ] };
-}
-
-// ===== /api/plan =====
-router.post('/', express.json(), async (req, res) => {
+// --- /api/plan/from-text ---
+router.post('/from-text', async (req, res) => {
   const text = (req.body?.text || '').trim();
+  if (!text) return res.status(400).json({ ok: false, error: 'text is required' });
 
-  // נזהה כוונה בסיסית (“fallback” בטוח)
-  const intent = detectIntent(text);
-  const fromEmail = extractEmail(text);
-  const hours = extractHours(text) || 4;
-  const newerThanDays = extractNewerThanDays(text);
-
-  let proposal, missing = [];
-
-  if (intent === 'sla-simple') {
-    proposal = buildSlaPipeline({ fromEmail, hours, newerThanDays });
-    if (!fromEmail) missing.push('fromEmail');
-    if (!hours) missing.push('hours');
-    missing.push('spreadsheetId','tab'); // sheetName=tab
-  }
-  else if (intent === 'lead-intake') {
-    proposal = buildLeadIntakePipeline();
-    missing.push('spreadsheetId','tab');
-  }
-  else if (intent === 'whatsapp-notify') {
-    proposal = buildWhatsappNotifyPipeline({ fromEmail, hours });
-    if (!fromEmail) missing.push('fromEmail');
-    if (!hours) missing.push('hours');
-    missing.push('toPhone');
-  }
-  else {
-    // לא זיהה—ננסה heuristics: אם כתוב "שעות/לא נענה" → SLA, אחרת Lead כברירת מחדל
-    if (/לא נענ(ה|ו)|שעות|unrepl(ied|y)/i.test(text)) {
-      proposal = buildSlaPipeline({ fromEmail, hours, newerThanDays });
-      if (!fromEmail) missing.push('fromEmail');
-      if (!hours) missing.push('hours');
-      missing.push('spreadsheetId','tab');
-    } else {
-      proposal = buildLeadIntakePipeline();
-      missing.push('spreadsheetId','tab');
+  // 1) Try Ollama first
+  try {
+    const r = await fetch(`${OLLAMA_BASE_URL}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: OLLAMA_MODEL,
+        prompt: `Return ONLY JSON with {steps:[...]}. The steps may include gmail.unreplied trigger and actions such as sheets.append and whatsapp.send. If any required param is missing, set null.\n\nUser:\n${text}`,
+        stream: false
+      })
+    });
+    const j = await r.json();
+    const raw = (j && j.response) ? j.response.trim() : '';
+    let plan;
+    try { plan = JSON.parse(raw); } catch (_e) {
+      // try to salvage a JSON block
+      const s = raw;
+      const a = s.lastIndexOf('{');
+      const b = s.lastIndexOf('}');
+      if (a >= 0 && b > a) plan = JSON.parse(s.slice(a, b+1));
     }
+    if (plan && Array.isArray(plan.steps)) {
+      // Build "missing" list for any nulls
+      const missing = [];
+      plan.steps.forEach((st, idx) => {
+        const unit = st.trigger || st.action || {};
+        const p = unit.params || {};
+        Object.entries(p).forEach(([k,v]) => { if (v === null || v === undefined || v === '') missing.push({ step: idx, key: k }); });
+      });
+      return res.json({ ok: true, type: 'free-steps', proposal: plan, missing });
+    }
+  } catch (_e) {
+    // ignore and fallback
   }
 
-  return res.json({
-    ok: true,
-    type: 'pipeline',
-    proposal,
-    missing: Array.from(new Set(missing)),
-    hints: { intent: intent || 'fallback', entities: { fromEmail, hours, newerThanDays } }
+  // 2) Fallback heuristics
+  const ent = detectEntities(text);
+  const steps = [];
+  steps.push({
+    trigger: {
+      type: 'gmail.unreplied',
+      params: {
+        fromEmail: ent.fromEmail || null,
+        newerThanDays: 30,
+        hours: ent.hours || 4,
+        limit: 50
+      }
+    }
   });
+  if (ent.hasSheets) {
+    steps.push({
+      action: {
+        type: 'sheets.append',
+        params: {
+          spreadsheetId: ent.spreadsheetId || null,
+          sheetName: 'SLA',
+          row: { from: '{{item.from}}', subject: '{{item.subject}}', ageHours: '{{item.ageHours}}' }
+        }
+      }
+    });
+  }
+  if (ent.hasWhatsapp) {
+    steps.push({
+      action: {
+        type: 'whatsapp.send',
+        params: {
+          to: ent.toPhone || null,
+          template: 'sla_breach_basic'
+        }
+      }
+    });
+  }
+  const missing = [];
+  steps.forEach((st, idx) => {
+    const unit = st.trigger || st.action || {};
+    const p = unit.params || {};
+    Object.entries(p).forEach(([k,v]) => { if (v === null) missing.push({ step: idx, key: k }); });
+  });
+  return res.json({ ok: true, type: 'heuristic-steps', proposal: { steps }, missing, hints: { source: 'fallback' } });
 });
 
 module.exports = router;
