@@ -1,63 +1,36 @@
-// backend/server.js
-require('dotenv').config();
+﻿require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const morgan = require('morgan');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 
-// --- App ---
 const app = express();
 
-// boot marker for logs
 console.log('boot-marker:', new Date().toISOString());
 console.log('[boot] __dirname:', __dirname);
 console.log('[boot] process.env.PORT:', process.env.PORT);
 console.log('[boot] process.env.HOST:', process.env.HOST);
 
-// --- Middlewares ---
 app.use(morgan('dev'));
 app.use(cors({ origin: '*'}));
-app.use(bodyParser.json({ limit: '2mb' }));
+app.use(bodyParser.json({ limit: '4mb' }));
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// --- Static ---
 app.use('/public', express.static(path.join(__dirname, 'public')));
 
-// --- Routes ---
-const planRoutes = require('./routes/plan');
-const automationsRoutes = require('./routes/automations');
-const nlpRoutes = require('./routes/nlp');
-const workflowsRoutes = require('./routes/workflows');
-const { startEngine } = require('./engine/engine');
+// Routes
+app.use('/api/nlp', require('./routes/nlp'));           // existing
+app.use('/api/plan', require('./routes/plan'));         // existing
+app.use('/api/automations', require('./routes/automations'));
+app.use('/api/sheets', require('./routes/sheets'));     // diagnostics & direct tests
 
-// engine can be optional - start if available
-let engineApi = null;
-try {
-  engineApi = startEngine();
-  console.log('[engine] started');
-} catch (e) {
-  console.warn('[engine] not started:', e.message);
-}
-
-// Mount routes
-app.use('/api/plan', planRoutes);
-app.use('/api/automations', automationsRoutes);
-app.use('/api/nlp', nlpRoutes);
-app.use('/api', workflowsRoutes(engineApi));
-
-// healthcheck
+// Health
 app.get('/health', (_, res) => res.send('OK'));
 
-// default page
-app.get('/', (req, res) =>
-  res.sendFile(path.join(__dirname, 'public', 'wizard_plus.html'))
-);
+// Home (optional)
+app.get('/', (req, res) => res.send('Backend is up'));
 
-// host/port
 const PORT = Number(process.env.PORT || 5000);
 const HOST = process.env.HOST || '0.0.0.0';
-
-app.listen(PORT, HOST, () => {
-  console.log(`Server listening on http://${HOST}:${PORT}`);
-});
+app.listen(PORT, HOST, () => console.log(`Server listening on http://${HOST}:${PORT}`));
