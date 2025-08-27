@@ -1,0 +1,25 @@
+cd C:\Users\moshe\automation-builder
+
+# בוחרים בראנץ' קבוע לשיגור (אפשר לשנות את השם אם תרצה)
+$BRANCH = "deploy"
+
+# משיכת רפרנסים מהשרת
+git fetch origin | Out-Null
+
+# מעבר/יצירה של הבראנץ'
+git switch -C $BRANCH
+
+# אם יש origin/$BRANCH נרבייס עליו, אחרת נרבייס על origin/main (אם קיים)
+$exists = git ls-remote --exit-code origin $BRANCH *> $null; $exists = ($LASTEXITCODE -eq 0)
+if ($exists) { git pull --rebase origin $BRANCH } else { git pull --rebase origin main 2>$null }
+
+# מנסים לשגר שינויים
+git add -A
+git diff --cached --quiet
+if ($LASTEXITCODE -eq 0) {
+  Write-Host "✔ אין מה לשגר (No changes)."
+} else {
+  git commit -m "update: $(Get-Date -Format s)"
+  git push -u origin $BRANCH
+  Write-Host "🚀 שוגר ל-$BRANCH"
+}
