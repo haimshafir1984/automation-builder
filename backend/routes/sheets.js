@@ -1,7 +1,9 @@
-﻿const express = require('express');
+﻿// backend/routes/sheets.js
+const express = require('express');
 const router = express.Router();
 const gs = require('../lib/googleSheets');
 
+// בדיקת קריאה של כותרות (מאמת הרשאות SA ושם טאבים)
 router.get('/test-access', async (req, res) => {
   try {
     const { spreadsheetId, tab='Sheet1' } = req.query;
@@ -13,6 +15,7 @@ router.get('/test-access', async (req, res) => {
   }
 });
 
+// דמו כתיבה ישירה לשורה אחת
 router.post('/append-test', async (req, res) => {
   try {
     const { spreadsheetId, sheetName='Sheet1', row={} } = req.body || {};

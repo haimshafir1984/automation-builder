@@ -1,22 +1,23 @@
-﻿const { google } = require('googleapis');
+﻿// backend/lib/googleSheets.js
+const { google } = require('googleapis');
 const fs = require('fs');
 
 function makeAuth(scopes=['https://www.googleapis.com/auth/spreadsheets']) {
-  // Prefer ADC with GOOGLE_APPLICATION_CREDENTIALS, but also allow inline creds
+  // אופציה א: שני משתני סביבה
   if (process.env.GOOGLE_CLIENT_EMAIL && process.env.GOOGLE_PRIVATE_KEY) {
-    const auth = new google.auth.JWT({
+    return new google.auth.JWT({
       email: process.env.GOOGLE_CLIENT_EMAIL,
       key: (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
       scopes,
     });
-    return auth;
   }
-  // If GOOGLE_CREDENTIALS_JSON is provided, materialize it
+  // אופציה ב: JSON מלא במשתנה סביבה
   if (process.env.GOOGLE_CREDENTIALS_JSON && !process.env.GOOGLE_APPLICATION_CREDENTIALS) {
     const fp = '/tmp/gcp-sa.json';
     fs.writeFileSync(fp, process.env.GOOGLE_CREDENTIALS_JSON);
     process.env.GOOGLE_APPLICATION_CREDENTIALS = fp;
   }
+  // אופציה ג: Secret File עם GOOGLE_APPLICATION_CREDENTIALS (מומלץ)
   return new google.auth.GoogleAuth({ scopes });
 }
 

@@ -1,4 +1,5 @@
-﻿const express = require('express');
+﻿// backend/routes/automations.js
+const express = require('express');
 const router = express.Router();
 
 function normalizeSteps(body) {
@@ -7,20 +8,14 @@ function normalizeSteps(body) {
   return null;
 }
 
-// Load registry safely
+// טען registry אמיתי
 let registry = null;
 try {
   registry = require('../capabilities/registry');
   console.log('[automations] loaded real registry');
 } catch (e) {
-  console.warn('[automations] registry load failed, will use minimal inline sheets adapter only:', e.message);
-  try {
-    const sheets = require('../capabilities/adapters/sheets');
-    registry = { sheets };
-  } catch (e2) {
-    console.warn('[automations] failed to load sheets adapter too:', e2.message);
-    registry = null;
-  }
+  console.warn('[automations] registry load failed:', e.message);
+  registry = null;
 }
 
 function getActionFn(type, mode) {
@@ -29,7 +24,6 @@ function getActionFn(type, mode) {
   return registry[cat][name][mode || 'execute'];
 }
 
-// Dry-run pipeline
 router.post('/dry-run', async (req, res) => {
   const steps = normalizeSteps(req.body);
   if (!steps) return res.json({ ok: false, error: 'empty pipeline' });
@@ -37,10 +31,7 @@ router.post('/dry-run', async (req, res) => {
   for (const step of steps) {
     if (step.action) {
       const fn = getActionFn(step.action.type, 'dryRun');
-      if (!fn) {
-        results.push({ ok: false, type: step.action.type, note: 'no adapter found (dry-run)' });
-        continue;
-      }
+      if (!fn) { results.push({ ok:false, type: step.action.type, note: 'no adapter found (dry-run)' }); continue; }
       const r = await fn(ctx, step.action.params || {});
       results.push({ ok: true, type: step.action.type, dryRun: true, ...r });
     } else if (step.trigger) {
@@ -50,7 +41,6 @@ router.post('/dry-run', async (req, res) => {
   return res.json({ ok: true, mode: 'dry-run', summary: { steps: steps.length, ok: true, checked, matched, appended }, results });
 });
 
-// Execute pipeline
 router.post('/execute', async (req, res) => {
   const steps = normalizeSteps(req.body);
   if (!steps) return res.json({ ok: false, error: 'empty pipeline' });
@@ -64,10 +54,7 @@ router.post('/execute', async (req, res) => {
     }
     if (step.action) {
       const fn = getActionFn(step.action.type, 'execute');
-      if (!fn) {
-        results.push({ ok: false, type: step.action.type, note: 'no adapter found' });
-        continue;
-      }
+      if (!fn) { results.push({ ok:false, type: step.action.type, note: 'no adapter found' }); continue; }
       try {
         const r = await fn(ctx, step.action.params || {});
         if (typeof r.appended === 'number') appended += r.appended;

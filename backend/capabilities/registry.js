@@ -1,4 +1,5 @@
-﻿module.exports = {
+﻿// backend/capabilities/registry.js
+module.exports = {
   sheets: require('./adapters/sheets'),
-  // add more adapters here (gmail, whatsapp, etc.)
+  // בעתיד: gmail: require('./adapters/gmail'), whatsapp: require('./adapters/whatsapp') ...
 };
