@@ -2,89 +2,168 @@
 <html lang="he" dir="rtl">
 <head>
   <meta charset="utf-8" />
-  <title>Automation Builder  SA Mode</title>
+  <title>Automation Builder — SA Mode</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
-    body { font-family: system-ui, -apple-system, "Segoe UI", Arial; margin:24px; }
-    label { display:block; margin:12px 0 6px; font-weight:600; }
-    input, textarea { width:100%; padding:10px; box-sizing:border-box; font-family:monospace; }
-    .row { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
-    button { padding:10px 14px; margin-right:8px; cursor:pointer; }
-    pre { background:#111; color:#0f0; padding:12px; overflow:auto; }
-    small { color:#666 }
+    :root { --bg:#0b1020; --card:#111936; --text:#e9ecf5; --muted:#94a3b8; --accent:#5eead4; --stroke:#1f2a4a; }
+    *{ box-sizing:border-box }
+    body{
+      margin:0; background:linear-gradient(180deg,#0b1020,#0a0f1e 30%,#0a0e1a);
+      color:var(--text); font-family:system-ui,-apple-system,"Segoe UI",Arial; line-height:1.45;
+    }
+    header{ padding:20px 24px; position:sticky; top:0; backdrop-filter:saturate(160%) blur(6px); background:#0b1020cc; border-bottom:1px solid var(--stroke); }
+    h1{ margin:0; font-size:20px; letter-spacing:.3px }
+    .wrap{ max-width:1100px; margin:24px auto; padding:0 16px }
+    .grid{ display:grid; gap:16px }
+    @media(min-width:980px){ .grid{ grid-template-columns: 1.2fr .8fr } }
+
+    .card{
+      background:linear-gradient(180deg,#0e1630,#0d1430);
+      border:1px solid var(--stroke); border-radius:16px; padding:14px 14px 16px;
+      box-shadow: 0 6px 18px #0008 inset, 0 12px 30px #0005;
+    }
+    .card h2{ margin:0 0 6px; font-size:16px }
+    .card p.caption{ margin:0 0 10px; color:var(--muted); font-size:13px }
+
+    label{ display:block; margin:12px 0 6px; font-weight:600; font-size:13px; color:#c9d5ff }
+    input, textarea, select{
+      width:100%; padding:10px 12px; border-radius:10px; background:#0a122a; color:var(--text);
+      border:1px solid #1c2544; outline:none;
+    }
+    textarea{ min-height:120px; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; resize:vertical }
+
+    .row{ display:grid; gap:12px }
+    @media(min-width:720px){ .row{ grid-template-columns:1fr 1fr } }
+
+    .buttons{ display:flex; gap:8px; flex-wrap:wrap; margin-top:12px }
+    button{
+      padding:10px 14px; border-radius:10px; border:1px solid #21305d;
+      background:linear-gradient(180deg,#12214d,#0e1b41); color:var(--text); cursor:pointer;
+    }
+    button.primary{ border-color:#2b6c66; background:linear-gradient(180deg,#0d3d39,#0a2d29) }
+    button.ghost{ background:transparent }
+    button:disabled{ opacity:.5; cursor:not-allowed }
+
+    pre{
+      background:#060a18; color:#b7f3ff; padding:12px; border-radius:12px; border:1px solid #17203f;
+      overflow:auto; max-height:360px; font-size:12px;
+    }
+    .muted{ color:var(--muted); font-size:12px }
+    .pill{ display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:999px; background:#0c1530; border:1px solid #1b2852; color:#bcd2ff; font-size:12px }
+    a{ color:#8ee6ff; text-decoration:none }
+    a:hover{ text-decoration:underline }
   </style>
 </head>
 <body>
-  <h1>Automation Builder (Service Account)</h1>
+  <header>
+    <h1>Automation Builder (Service Account) • UI ללא OAuth</h1>
+  </header>
 
-  <div class="row">
-    <div>
-      <label>Spreadsheet ID</label>
-      <input id="sheetId" value="1HoFa5MUvMeijYYYoLl_cSW7cvhe013qsEvouuewNd3M" />
-    </div>
-    <div>
-      <label>Sheet (tab) name</label>
-      <input id="tab" value="sla" />
-    </div>
+  <div class="wrap grid">
+
+    <!-- צד שמאל: טקסט חופשי -> בניית תכנית -->
+    <section class="card">
+      <h2>טקסט חופשי → בניית תכנית</h2>
+      <p class="caption">כתוב מה תרצה שיקרה (אפשר כמה פעולות). לדוגמה: “כל מייל ממשתמש foo@bar.com שלא קיבל מענה 4 שעות → הוסף לשיטס בלשונית sla ושלח וואטסאפ ל+972...”</p>
+
+      <label>טקסט חופשי</label>
+      <textarea id="nltxt" placeholder="תאר את האוטומציה שאתה רוצה"></textarea>
+
+      <div class="row">
+        <div>
+          <label>ספק NLP</label>
+          <select id="provider">
+            <option value="heuristic">heuristic (מובנה, בסיסי)</option>
+            <option value="ollama">ollama (מומלץ)</option>
+          </select>
+          <div class="muted">כדי להשתמש ב-Ollama, הגדר <code>OLLAMA_BASE_URL</code> ב-Render (למשל <code>http://x.x.x.x:11434</code>).</div>
+        </div>
+        <div>
+          <label>מודל (Ollama)</label>
+          <input id="model" placeholder="llama3.1:8b" value="llama3.1:8b" />
+          <div class="muted">המודל נמשך בצד השרת. אפשר לשנות לפי מה שהתקנת.</div>
+        </div>
+      </div>
+
+      <div class="buttons">
+        <button id="btnPlan" class="primary">🧩 בנה תכנית</button>
+        <button id="btnPlanClear" class="ghost">נקה</button>
+      </div>
+
+      <label style="margin-top:14px">תכנית שנבנתה (ניתן לערוך)</label>
+      <textarea id="planJson" placeholder='{"steps":[...]}'></textarea>
+
+      <div class="buttons">
+        <button id="btnDryFromPlan">🧪 Dry-Run</button>
+        <button id="btnExecFromPlan" class="primary">🚀 Execute</button>
+      </div>
+
+      <label style="margin-top:14px">תוצאה</label>
+      <pre id="outPlan">// כאן תופיע התשובה</pre>
+    </section>
+
+    <!-- צד ימין: בדיקת Sheets מהירה + Pipeline ידני -->
+    <section class="card">
+      <h2>בדיקה מהירה ל-Sheets</h2>
+      <div class="pill">Service Account • ללא OAuth</div>
+      <p class="caption">כדי לוודא חיבור: הוסף שורה לטאב הרצוי.</p>
+
+      <div class="row">
+        <div>
+          <label>Spreadsheet ID</label>
+          <input id="sheetId" value="1HoFa5MUvMeijYYYoLl_cSW7cvhe013qsEvouuewNd3M" />
+        </div>
+        <div>
+          <label>Sheet (tab) name</label>
+          <input id="tab" value="sla" />
+        </div>
+      </div>
+
+      <label>Row JSON</label>
+      <textarea id="row" rows="6">{ "test": "hello-from-ui", "ts": "" }</textarea>
+      <div class="buttons">
+        <button id="btnDry" class="ghost">🧪 Dry-Run</button>
+        <button id="btnExec" class="primary">🚀 Append</button>
+        <a id="acc" href="#" target="_blank" class="pill">בדיקת גישה (headers)</a>
+      </div>
+
+      <label style="margin-top:14px">תוצאה</label>
+      <pre id="out">// כאן תופיע התשובה</pre>
+
+      <h2 style="margin-top:22px">או: JSON Pipeline ידני</h2>
+      <p class="caption">אפשר להדביק כאן Pipeline מלא ולהריץ.</p>
+      <textarea id="manualPipe" rows="8">{
+  "steps": [
+    {
+      "action": {
+        "type": "sheets.append",
+        "params": {
+          "spreadsheetId": "1HoFa5MUvMeijYYYoLl_cSW7cvhe013qsEvouuewNd3M",
+          "sheetName": "sla",
+          "row": { "test": "hello-from-ui", "ts": "" }
+        }
+      }
+    }
+  ]
+}</textarea>
+      <div class="buttons">
+        <button id="btnDryManual">🧪 Dry-Run</button>
+        <button id="btnExecManual" class="primary">🚀 Execute</button>
+      </div>
+      <pre id="outManual"></pre>
+    </section>
+
   </div>
-
-  <label>Row JSON</label>
-  <textarea id="row" rows="6">{ "test": "hello-from-ui", "ts": "" }</textarea>
-  <small>טיפ: הheader יווצר אוטומטית מהמפתחות של ה-JSON אם חסר.</small>
-
-  <div style="margin-top:12px">
-    <button id="btnDry"> Dry-Run</button>
-    <button id="btnExec"> Execute</button>
-  </div>
-
-  <h3>Output</h3>
-  <pre id="out"></pre>
-
-  <p>
-    <a href="/api/sheets/version" target="_blank">/api/sheets/version</a> 
-    <a id="acc" href="#" target="_blank">/api/sheets/test-access</a>
-  </p>
 
 <script>
 function $(id){ return document.getElementById(id); }
 function setDefaults(){
-  const r = JSON.parse($('row').value);
-  if (!r.ts) { r.ts = new Date().toISOString(); $('row').value = JSON.stringify(r, null, 2); }
+  try{
+    const r = JSON.parse($('row').value);
+    if (!r.ts) { r.ts = new Date().toISOString(); $('row').value = JSON.stringify(r, null, 2); }
+  }catch{}
 }
 setDefaults();
-
-function buildPipeline(){
-  const spreadsheetId = $('sheetId').value.trim();
-  const sheetName = $('tab').value.trim() || 'Sheet1';
-  let row;
-  try { row = JSON.parse($('row').value); }
-  catch(e){ alert('Row JSON לא תקין: ' + e.message); throw e; }
-
-  return {
-    steps: [
-      {
-        action: {
-          type: "sheets.append",
-          params: { spreadsheetId, sheetName, row }
-        }
-      }
-    ]
-  };
-}
-
-async function call(path, body){
-  const res = await fetch(path, {
-    method: 'POST',
-    headers: { 'content-type':'application/json' },
-    body: JSON.stringify(body)
-  });
-  const text = await res.text();
-  $('out').textContent = text;
-  try { console.log(JSON.parse(text)); } catch {}
-}
-
-$('btnDry').onclick = () => { const p = buildPipeline(); call('/api/automations/dry-run', p); };
-$('btnExec').onclick = () => { const p = buildPipeline(); call('/api/automations/execute', p); };
 
 function updateLinks(){
   const id = encodeURIComponent($('sheetId').value.trim());
@@ -93,6 +172,88 @@ function updateLinks(){
 }
 ['sheetId','tab'].forEach(id => $(id).addEventListener('input', updateLinks));
 updateLinks();
+
+async function call(path, body){
+  const res = await fetch(path, { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
+  const text = await res.text();
+  try { return JSON.parse(text); } catch { return { raw: text }; }
+}
+
+$('btnDry').onclick = async () => {
+  const spreadsheetId = $('sheetId').value.trim();
+  const sheetName = $('tab').value.trim() || 'Sheet1';
+  let row; try { row = JSON.parse($('row').value); if(!row.ts) row.ts = new Date().toISOString(); } catch(e){ alert('Row JSON לא תקין: '+e.message); return; }
+  const p = { steps:[ { action:{ type:"sheets.append", params:{ spreadsheetId, sheetName, row } } } ] };
+  const r = await call('/api/automations/dry-run', p);
+  $('out').textContent = JSON.stringify(r,null,2);
+};
+
+$('btnExec').onclick = async () => {
+  const spreadsheetId = $('sheetId').value.trim();
+  const sheetName = $('tab').value.trim() || 'Sheet1';
+  let row; try { row = JSON.parse($('row').value); if(!row.ts) row.ts = new Date().toISOString(); } catch(e){ alert('Row JSON לא תקין: '+e.message); return; }
+  const p = { steps:[ { action:{ type:"sheets.append", params:{ spreadsheetId, sheetName, row } } } ] };
+  const r = await call('/api/automations/execute', p);
+  $('out').textContent = JSON.stringify(r,null,2);
+};
+
+$('btnDryManual').onclick = async () => {
+  let p; try{ p = JSON.parse($('manualPipe').value) } catch(e){ alert('Pipeline JSON לא תקין: '+e.message); return; }
+  const r = await call('/api/automations/dry-run', p);
+  $('outManual').textContent = JSON.stringify(r,null,2);
+};
+$('btnExecManual').onclick = async () => {
+  let p; try{ p = JSON.parse($('manualPipe').value) } catch(e){ alert('Pipeline JSON לא תקין: '+e.message); return; }
+  const r = await call('/api/automations/execute', p);
+  $('outManual').textContent = JSON.stringify(r,null,2);
+};
+
+/* --- טקסט חופשי -> תכנית --- */
+$('btnPlanClear').onclick = () => { $('nltxt').value=''; $('planJson').value=''; $('outPlan').textContent=''; };
+
+$('btnPlan').onclick = async () => {
+  const text = $('nltxt').value.trim();
+  if (!text) { alert('כתוב טקסט חופשי'); return; }
+  const provider = $('provider').value;
+  const model = $('model').value.trim() || undefined;
+
+  const body = { text, provider, model };
+  // שרת ה-plan צריך לתמוך בשדות האלה; אם לא – ישתמש בברירת מחדל.
+  try{
+    const res = await fetch('/api/plan/from-text', {
+      method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body)
+    });
+    const txt = await res.text();
+    let json;
+    try { json = JSON.parse(txt); } catch { throw new Error('Invalid JSON from server: '+txt); }
+
+    // כבד"כ מגיע במבנה: { ok:true, provider:"...", proposal:{ steps:[...] } }
+    let candidate = json?.proposal || json;
+    if (!candidate?.steps && json?.steps) candidate = json;
+    if (!candidate?.steps) {
+      $('outPlan').textContent = JSON.stringify(json, null, 2);
+      alert('לא התקבלה תכנית חוקית מהשרת (אין steps). בדוק קונפיגורציית NLP / OLLAMA_BASE_URL.');
+      return;
+    }
+    $('planJson').value = JSON.stringify(candidate, null, 2);
+    $('outPlan').textContent = JSON.stringify({ok:true, note:'תכנית נבנתה. ניתן לערוך ואז Dry-Run/Execute.'}, null, 2);
+  }catch(e){
+    $('outPlan').textContent = String(e);
+  }
+};
+
+$('btnDryFromPlan').onclick = async () => {
+  let p; try{ p = JSON.parse($('planJson').value) } catch(e){ alert('JSON לא תקין: '+e.message); return; }
+  if (!p.steps) { alert('חסר שדה steps'); return; }
+  const r = await call('/api/automations/dry-run', p);
+  $('outPlan').textContent = JSON.stringify(r,null,2);
+};
+$('btnExecFromPlan').onclick = async () => {
+  let p; try{ p = JSON.parse($('planJson').value) } catch(e){ alert('JSON לא תקין: '+e.message); return; }
+  if (!p.steps) { alert('חסר שדה steps'); return; }
+  const r = await call('/api/automations/execute', p);
+  $('outPlan').textContent = JSON.stringify(r,null,2);
+};
 </script>
 </body>
 </html>
