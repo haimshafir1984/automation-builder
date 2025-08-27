@@ -1,5 +1,4 @@
-﻿// backend/capabilities/adapters/sheets.js
-const gs = require('../../lib/googleSheets');
+﻿const gs = require('../../lib/googleSheets');
 
 module.exports = {
   append: {
@@ -17,14 +16,10 @@ module.exports = {
 
     async execute(ctx, params={}) {
       const { spreadsheetId, sheetName='Sheet1' } = params;
-
-      // מצב A: כתיבה של שורה בודדת כאובייקט (יוצר כותרות אם חסרות)
       if (params.row && typeof params.row === 'object') {
         const { header, appended } = await gs.appendRowObject({ spreadsheetId, tab: sheetName, rowObj: params.row });
         return { spreadsheetId, tab: sheetName, header, appended };
       }
-
-      // מצב B: columns + ctx.items (כשיהיו טריגרים)
       const columns = Array.isArray(params.columns) && params.columns.length ? params.columns : ['from','subject','date'];
       const items = ctx.items || [];
       const rows = items.map(i => columns.map(c => i[c] ?? ''));

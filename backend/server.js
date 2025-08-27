@@ -1,4 +1,5 @@
 ﻿require('dotenv').config();
+
 const express = require('express');
 const path = require('path');
 const morgan = require('morgan');
@@ -6,7 +7,9 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 
 const app = express();
-
+// הוסף את אלו למעלה:
+console.log('[boot] commit:', process.env.RENDER_GIT_COMMIT || 'n/a');
+console.log('[boot] sheets route resolves to:', require.resolve('./routes/sheets'));
 console.log('boot-marker:', new Date().toISOString());
 console.log('[boot] __dirname:', __dirname);
 console.log('[boot] process.env.PORT:', process.env.PORT);

@@ -1,9 +1,7 @@
-﻿// backend/lib/googleSheets.js
-const { google } = require('googleapis');
+﻿const { google } = require('googleapis');
 const fs = require('fs');
 
 function makeAuth(scopes=['https://www.googleapis.com/auth/spreadsheets']) {
-  // אופציה א: שני משתני סביבה
   if (process.env.GOOGLE_CLIENT_EMAIL && process.env.GOOGLE_PRIVATE_KEY) {
     return new google.auth.JWT({
       email: process.env.GOOGLE_CLIENT_EMAIL,
@@ -11,13 +9,11 @@ function makeAuth(scopes=['https://www.googleapis.com/auth/spreadsheets']) {
       scopes,
     });
   }
-  // אופציה ב: JSON מלא במשתנה סביבה
   if (process.env.GOOGLE_CREDENTIALS_JSON && !process.env.GOOGLE_APPLICATION_CREDENTIALS) {
     const fp = '/tmp/gcp-sa.json';
     fs.writeFileSync(fp, process.env.GOOGLE_CREDENTIALS_JSON);
     process.env.GOOGLE_APPLICATION_CREDENTIALS = fp;
   }
-  // אופציה ג: Secret File עם GOOGLE_APPLICATION_CREDENTIALS (מומלץ)
   return new google.auth.GoogleAuth({ scopes });
 }
 
@@ -42,9 +38,7 @@ async function setHeader(spreadsheetId, tab, header) {
   });
 }
 
-function rowObjectToArray(rowObj, header) {
-  return header.map(h => (rowObj[h] ?? ''));
-}
+function rowObjectToArray(rowObj, header) { return header.map(h => (rowObj[h] ?? '')); }
 
 async function appendRows(spreadsheetId, tab, rows) {
   if (!rows?.length) return { appended: 0 };
@@ -69,5 +63,4 @@ async function appendRowObject({ spreadsheetId, tab='Sheet1', rowObj }) {
 }
 
 function colLetter(n){ let s=''; while(n>0){ n--; s=String.fromCharCode(65+(n%26))+s; n=Math.floor(n/26);} return s; }
-
 module.exports = { readHeader, setHeader, appendRows, appendRowObject };

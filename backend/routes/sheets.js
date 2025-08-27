@@ -1,9 +1,11 @@
-﻿// backend/routes/sheets.js
-const express = require('express');
+﻿const express = require('express');
 const router = express.Router();
 const gs = require('../lib/googleSheets');
 
-// בדיקת קריאה של כותרות (מאמת הרשאות SA ושם טאבים)
+console.log('[routes/sheets] SA router loaded'); // יופיע בלוגים בעת ה־boot
+
+router.get('/version', (req, res) => res.json({ ok:true, version:'sa-v1' }));
+
 router.get('/test-access', async (req, res) => {
   try {
     const { spreadsheetId, tab='Sheet1' } = req.query;
@@ -15,7 +17,6 @@ router.get('/test-access', async (req, res) => {
   }
 });
 
-// דמו כתיבה ישירה לשורה אחת
 router.post('/append-test', async (req, res) => {
   try {
     const { spreadsheetId, sheetName='Sheet1', row={} } = req.body || {};
