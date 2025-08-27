@@ -26,6 +26,7 @@ app.use('/api/google', require('./routes/google'));
 app.use('/api/plan', require('./routes/plan'));
 app.use('/api/nlp', require('./routes/nlp'));
 app.use('/api/automations', require('./routes/automations'));
+app.use('/api/sheets', require('./routes/sheets'));
 
 // healthcheck (שירותי deploy בודקים אותו)
 app.get('/health', (_, res) => res.send('OK'));
