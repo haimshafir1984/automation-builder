@@ -1,6 +1,10 @@
 ﻿// backend/capabilities/registry.js
 module.exports = {
-  sheets: require('./adapters/sheets'),
-  http:   require('./adapters/http'),
-  whatsapp: require('./adapters/whatsapp')
+  // Triggers
+  'gmail.unreplied': require('./adapters/gmail').unreplied,
+
+  // Actions
+  'sheets.append': require('./adapters/sheets').append,
+  'http.request':  require('./adapters/http').request,
+  'whatsapp.send': require('./adapters/whatsapp').send,
 };
