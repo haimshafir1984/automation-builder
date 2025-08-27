@@ -19,4 +19,6 @@ function resolveAdapter(type){
   return registry[type] || null;
 }
 
-module.exports = { registry, resolveAdapter };
+module.exports = {
+  sheets: require('./adapters/sheets'),
+};
