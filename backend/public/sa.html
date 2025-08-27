@@ -1,0 +1,98 @@
+﻿<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <title>Automation Builder  SA Mode</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Arial; margin:24px; }
+    label { display:block; margin:12px 0 6px; font-weight:600; }
+    input, textarea { width:100%; padding:10px; box-sizing:border-box; font-family:monospace; }
+    .row { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+    button { padding:10px 14px; margin-right:8px; cursor:pointer; }
+    pre { background:#111; color:#0f0; padding:12px; overflow:auto; }
+    small { color:#666 }
+  </style>
+</head>
+<body>
+  <h1>Automation Builder (Service Account)</h1>
+
+  <div class="row">
+    <div>
+      <label>Spreadsheet ID</label>
+      <input id="sheetId" value="1HoFa5MUvMeijYYYoLl_cSW7cvhe013qsEvouuewNd3M" />
+    </div>
+    <div>
+      <label>Sheet (tab) name</label>
+      <input id="tab" value="sla" />
+    </div>
+  </div>
+
+  <label>Row JSON</label>
+  <textarea id="row" rows="6">{ "test": "hello-from-ui", "ts": "" }</textarea>
+  <small>טיפ: הheader יווצר אוטומטית מהמפתחות של ה-JSON אם חסר.</small>
+
+  <div style="margin-top:12px">
+    <button id="btnDry"> Dry-Run</button>
+    <button id="btnExec"> Execute</button>
+  </div>
+
+  <h3>Output</h3>
+  <pre id="out"></pre>
+
+  <p>
+    <a href="/api/sheets/version" target="_blank">/api/sheets/version</a> 
+    <a id="acc" href="#" target="_blank">/api/sheets/test-access</a>
+  </p>
+
+<script>
+function $(id){ return document.getElementById(id); }
+function setDefaults(){
+  const r = JSON.parse($('row').value);
+  if (!r.ts) { r.ts = new Date().toISOString(); $('row').value = JSON.stringify(r, null, 2); }
+}
+setDefaults();
+
+function buildPipeline(){
+  const spreadsheetId = $('sheetId').value.trim();
+  const sheetName = $('tab').value.trim() || 'Sheet1';
+  let row;
+  try { row = JSON.parse($('row').value); }
+  catch(e){ alert('Row JSON לא תקין: ' + e.message); throw e; }
+
+  return {
+    steps: [
+      {
+        action: {
+          type: "sheets.append",
+          params: { spreadsheetId, sheetName, row }
+        }
+      }
+    ]
+  };
+}
+
+async function call(path, body){
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'content-type':'application/json' },
+    body: JSON.stringify(body)
+  });
+  const text = await res.text();
+  $('out').textContent = text;
+  try { console.log(JSON.parse(text)); } catch {}
+}
+
+$('btnDry').onclick = () => { const p = buildPipeline(); call('/api/automations/dry-run', p); };
+$('btnExec').onclick = () => { const p = buildPipeline(); call('/api/automations/execute', p); };
+
+function updateLinks(){
+  const id = encodeURIComponent($('sheetId').value.trim());
+  const tab = encodeURIComponent($('tab').value.trim() || 'Sheet1');
+  $('acc').href = `/api/sheets/test-access?spreadsheetId=${id}&tab=${tab}`;
+}
+['sheetId','tab'].forEach(id => $(id).addEventListener('input', updateLinks));
+updateLinks();
+</script>
+</body>
+</html>

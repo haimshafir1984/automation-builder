@@ -1,5 +1,4 @@
-﻿// backend/server.js
-require('dotenv').config();
+﻿require('dotenv').config();
 
 const express = require('express');
 const path = require('path');
@@ -31,7 +30,7 @@ app.use('/api/sheets', require('./routes/sheets'));
 // Health
 app.get('/health', (_, res) => res.send('OK'));
 
-// Home – הגש UI ללא OAuth אם קיים (sa.html). אם לא, נסה wizard_plus.html. אחרת טקסט.
+// Home  הגש UI ללא OAuth אם קיים (sa.html). אם לא, נסה wizard_plus.html. אחרת טקסט.
 app.get('/', (req, res) => {
   const sa = path.join(__dirname, 'public', 'sa.html');
   const wiz = path.join(__dirname, 'public', 'wizard_plus.html');
