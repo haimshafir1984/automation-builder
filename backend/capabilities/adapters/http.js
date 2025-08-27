@@ -1,25 +1,24 @@
 // backend/capabilities/adapters/http.js
-/**
- * Generic HTTP request adapter (Webhook/REST), כדי לחבר שירותים בלי קוד ייעודי.
- */
-const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args));
-
 module.exports = {
   request: {
-    async dryRun(_ctx, params={}){
-      const { url, method='POST', headers={}, body=null } = params;
-      return { url, method, headers, body, preview: true };
+    async dryRun(ctx, params={}) {
+      const { url, method='GET', headers={}, body } = params;
+      return { url, method, headers, body, note: 'dry-run http.request (no network)' };
     },
-    async execute(_ctx, params={}){
-      const { url, method='POST', headers={}, body=null, timeoutMs=12000 } = params;
-      if (!url) throw new Error('url is required');
-      const res = await fetch(url, {
-        method, headers,
-        body: (body && typeof body==='object') ? JSON.stringify(body) : body,
-        timeout: timeoutMs
-      });
+    async execute(ctx, params={}) {
+      const { url, method='GET', headers={}, body } = params;
+      if (!url) return { ok:false, error:'url is required' };
+      const init = { method, headers };
+      if (body !== undefined) init.body = typeof body === 'string' ? body : JSON.stringify(body);
+      const res = await fetch(url, init);
       const text = await res.text();
-      return { status: res.status, ok: res.ok, body: text.slice(0, 2000) };
+      return {
+        ok: res.ok,
+        status: res.status,
+        statusText: res.statusText,
+        headers: Object.fromEntries(res.headers),
+        bodyPreview: text.slice(0, 4000)
+      };
     }
   }
 };
