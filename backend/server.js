@@ -27,6 +27,8 @@ app.use('/api/nlp', require('./routes/nlp'));
 app.use('/api/plan', require('./routes/plan'));
 app.use('/api/automations', require('./routes/automations'));
 app.use('/api/sheets', require('./routes/sheets'));
+app.use('/api/google', require('./routes/google')); // ← חדש / חשוב
+
 
 // בריאות
 app.get('/health', (_, res) => res.send('OK'));
