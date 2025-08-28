@@ -20,7 +20,7 @@ async function runStep(step, mode, ctx){
     return { ok:false, type, note };
   }
 
-  // תמיכה גם במיפוי לפונקציה ישירה וגם באובייקט עם execute/dryRun
+  // תמיכה גם באובייקט (execute/dryRun) וגם בפונקציה
   let fn = null;
   if (typeof adapter === 'function') {
     fn = adapter; // נקרא ישירות
@@ -49,14 +49,14 @@ async function run(mode, req, res){
     results.push(r);
   }
 
+  const sumSheets = results.find(r => r.type === 'sheets.append');
+  const sumGmail  = results.find(r => r.type === 'gmail.unreplied');
   const summary = {
     steps: pipe.steps.length,
     ok: results.every(r => r.ok !== false),
-    checked: results.find(r => r.type === 'gmail.unreplied')?.checked || 0,
-    matched: results.find(r => r.type === 'gmail.unreplied')?.matched || 0,
-    appended: results.find(r => r.type === 'sheets.append')?.updated
-           || results.find(r => r.type === 'sheets.append')?.appended
-           || 0,
+    checked: sumGmail?.checked || 0,
+    matched: sumGmail?.matched || 0,
+    appended: sumSheets?.updated || sumSheets?.appended || 0,
   };
   return res.json({ ok:true, mode: mode === 'dryRun' ? 'dry-run' : 'execute', summary, results });
 }
