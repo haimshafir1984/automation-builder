@@ -4,7 +4,6 @@ const router = express.Router();
 const registry = require('../capabilities/registry');
 
 function normalizePipeline(body){
-  // תומך גם ב- {steps:[...]} וגם ב- {pipeline:{steps:[...]}}
   if (body && Array.isArray(body.steps)) return { steps: body.steps };
   if (body && body.pipeline && Array.isArray(body.pipeline.steps)) return { steps: body.pipeline.steps };
   return { steps: [] };
@@ -20,7 +19,14 @@ async function runStep(step, mode, ctx){
     const note = (mode === 'dryRun') ? 'no adapter found (dry-run)' : 'no adapter found';
     return { ok:false, type, note };
   }
-  const fn = adapter[mode] || adapter.execute;
+
+  // תמיכה גם במיפוי לפונקציה ישירה וגם באובייקט עם execute/dryRun
+  let fn = null;
+  if (typeof adapter === 'function') {
+    fn = adapter; // נקרא ישירות
+  } else {
+    fn = adapter[mode] || adapter.execute || adapter.send || null;
+  }
   if (!fn) return { ok:false, type, error:`adapter missing ${mode} handler` };
 
   const params = unit.params || {};
@@ -36,7 +42,7 @@ async function run(mode, req, res){
   const pipe = normalizePipeline(req.body || {});
   if (!pipe.steps.length) return res.json({ ok:false, error:'empty pipeline' });
 
-  const ctx = {}; // future: auth/userKey וכו׳
+  const ctx = {};
   const results = [];
   for (const step of pipe.steps){
     const r = await runStep(step, mode, ctx);
@@ -48,7 +54,9 @@ async function run(mode, req, res){
     ok: results.every(r => r.ok !== false),
     checked: results.find(r => r.type === 'gmail.unreplied')?.checked || 0,
     matched: results.find(r => r.type === 'gmail.unreplied')?.matched || 0,
-    appended: results.find(r => r.type === 'sheets.append')?.updated || results.find(r => r.type === 'sheets.append')?.appended || 0,
+    appended: results.find(r => r.type === 'sheets.append')?.updated
+           || results.find(r => r.type === 'sheets.append')?.appended
+           || 0,
   };
   return res.json({ ok:true, mode: mode === 'dryRun' ? 'dry-run' : 'execute', summary, results });
 }
