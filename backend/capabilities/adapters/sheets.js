@@ -2,63 +2,84 @@
 const { google } = require('googleapis');
 
 async function getSheetsClient() {
-  // נשען על GOOGLE_APPLICATION_CREDENTIALS (Secret File ברנדר)
+  // מחייב GOOGLE_APPLICATION_CREDENTIALS מצביע לקובץ ה-SA
   const auth = new google.auth.GoogleAuth({
     scopes: ['https://www.googleapis.com/auth/spreadsheets']
   });
-  const sheets = google.sheets({ version: 'v4', auth });
-  return sheets;
+  return google.sheets({ version: 'v4', auth });
 }
 
-function objToRow(rowObj) {
-  // מייצר סדר עמודות קבוע: לפי מפתחות האובייקט
-  const keys = Object.keys(rowObj || {});
-  const values = keys.map(k => String(rowObj[k] ?? ''));
-  return { header: keys, values };
+function objectToRow(rowObj, header){
+  // מסדר ערכים לפי סדר הכותרת
+  return header.map(h => (rowObj && rowObj[h] != null) ? String(rowObj[h]) : '');
 }
 
-async function appendRow(spreadsheetId, sheetName, rowObj) {
-  const sheets = await getSheetsClient();
-  const { header, values } = objToRow(rowObj);
-
-  // נכתוב תמיד ל- A1 (append), וה-API יוסיף שורה מתחת לאחרונות
-  const range = `${sheetName}!A1`;
-  const res = await sheets.spreadsheets.values.append({
-    spreadsheetId,
-    range,
-    valueInputOption: 'RAW',
-    insertDataOption: 'INSERT_ROWS',
-    requestBody: { values: [values] }
+async function ensureHeader(sheets, spreadsheetId, sheetName, desiredHeader){
+  // אם אין כותרת – נכתוב את הכותרת המבוקשת
+  const get = await sheets.spreadsheets.values.get({
+    spreadsheetId, range: `${sheetName}!1:1`
   });
-  return { updated: res.data.updates?.updatedRows || 0, header };
+  let header = (get.data.values && get.data.values[0]) || [];
+  if (!header.length && desiredHeader && desiredHeader.length){
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${sheetName}!1:1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [desiredHeader] }
+    });
+    header = desiredHeader.slice();
+  }
+  return header;
 }
 
 module.exports = {
-  append: {
-    async dryRun(_ctx, params = {}) {
-      const { spreadsheetId, sheetName = 'Sheet1', row = {} } = params;
-      const r = objToRow(row);
-      return {
-        ok: true,
-        dryRun: true,
-        spreadsheetId: spreadsheetId || null,
-        tab: sheetName,
-        header: r.header,
-        preview: [r.values],
-        appended: 0,
-        mode: 'row-object'
-      };
-    },
-    async execute(_ctx, params = {}) {
-      try {
-        const { spreadsheetId, sheetName = 'Sheet1', row = {} } = params;
-        if (!spreadsheetId) return { ok: false, error: 'spreadsheetId is required' };
-        if (!sheetName)     return { ok: false, error: 'sheetName is required' };
-        const out = await appendRow(spreadsheetId, sheetName, row);
-        return { ok: true, ...out };
-      } catch (e) {
-        return { ok: false, error: String(e.message || e) };
-      }
-    }
+  // DryRun: מציג מה היה נכתב
+  async dryRun(_ctx, params){
+    const spreadsheetId = params.spreadsheetId;
+    const sheetName     = params.sheetName || params.tab || 'Sheet1';
+    const rowObj        = params.row || {};
+    const header        = Object.keys(rowObj).length ? Object.keys(rowObj) : ['from','subject','ageHours'];
+    return {
+      ok: true,
+      type: 'sheets.append',
+      dryRun: true,
+      spreadsheetId,
+      tab: sheetName,
+      header,
+      preview: [ objectToRow(rowObj, header) ],
+      appended: 0
+    };
+  },
+
+  // Execute: כותב באמת
+  async execute(_ctx, params){
+    const spreadsheetId = params.spreadsheetId;
+    const sheetName     = params.sheetName || params.tab || 'Sheet1';
+    const rowObj        = params.row || {};
+
+    if (!spreadsheetId) throw new Error('spreadsheetId is required');
+    if (!sheetName)     throw new Error('sheetName is required');
+
+    const sheets = await getSheetsClient();
+    const headerDesired = Object.keys(rowObj).length ? Object.keys(rowObj) : ['from','subject','ageHours'];
+    const header = await ensureHeader(sheets, spreadsheetId, sheetName, headerDesired);
+    const values = [ objectToRow(rowObj, header) ];
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${sheetName}!A1`,
+      valueInputOption: 'USER_ENTERED',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: { values }
+    });
+
+    return {
+      ok: true,
+      type: 'sheets.append',
+      spreadsheetId,
+      tab: sheetName,
+      columns: header,
+      appended: 1
+    };
   }
 };

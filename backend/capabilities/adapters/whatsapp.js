@@ -1,5 +1,6 @@
 // backend/capabilities/adapters/whatsapp.js
 const twilio = require('twilio');
+const Mustache = require('mustache');
 
 function detectProvider() {
   const hasMeta   = !!(process.env.WHATSAPP_TOKEN && process.env.WHATSAPP_PHONE_ID);
@@ -8,23 +9,29 @@ function detectProvider() {
   if (hasTwilio) return 'twilio';
   return null;
 }
-
 function normalizeToPhone(raw, fallback) {
   let v = (raw || fallback || '').toString().trim();
   if (!v) return null;
-  v = v.replace(/[^\d+]/g, '');                          // נקה רווחים/מקפים
-  if (!/^\+[1-9]\d{7,14}$/.test(v)) return null;         // E.164
+  v = v.replace(/[^\d+]/g, '');
+  if (!/^\+[1-9]\d{7,14}$/.test(v)) return null;
   return v.startsWith('whatsapp:') ? v : ('whatsapp:' + v);
 }
+function render(str, scope){
+  if (typeof str !== 'string') return str;
+  try { return Mustache.render(str, scope || {}); }
+  catch { return str; }
+}
 
-async function sendViaTwilio(_ctx, params, mode='execute') {
+async function sendViaTwilio(ctx, params, mode='execute') {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken  = process.env.TWILIO_AUTH_TOKEN;
-  const fromWhats  = process.env.TWILIO_WHATSAPP_FROM;    // למשל whatsapp:+14155238886
+  const fromWhats  = process.env.TWILIO_WHATSAPP_FROM;
   const defaultTo  = process.env.TWILIO_WHATSAPP_TO || process.env.DEFAULT_WHATSAPP_TO || null;
 
   const to   = normalizeToPhone(params.to, defaultTo);
-  const body = params.text || params.message || params.body || 'שלום!';
+  // רינדור טקסט עם {{item.*}}
+  const scope = { item: ctx.item || {}, params };
+  const body = render(params.text || params.message || params.body || 'שלום!', scope);
 
   if (mode === 'dryRun') {
     if (!to) {
@@ -52,5 +59,5 @@ module.exports = {
     if (p === 'meta')   throw new Error('Meta provider not implemented');
     throw new Error('No WhatsApp provider configured (Twilio/Meta)');
   },
-  async send(ctx, params) { return module.exports.execute(ctx, params); } // תאימות
+  async send(ctx, params) { return module.exports.execute(ctx, params); }
 };
