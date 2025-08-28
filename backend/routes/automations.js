@@ -1,5 +1,4 @@
-﻿// backend/routes/automations.js
-const express = require('express');
+﻿const express = require('express');
 const router = express.Router();
 const Mustache = require('mustache');
 const registry = require('../capabilities/registry');
@@ -25,7 +24,6 @@ function renderDeep(val, scope){
 }
 
 async function callAdapter(adapter, mode, ctx, params){
-  // תמיכה גם באובייקט וגם בפונקציה
   let fn = null;
   if (typeof adapter === 'function') fn = adapter;
   else fn = adapter[mode] || adapter.execute || adapter.send || null;
@@ -38,21 +36,19 @@ async function run(mode, req, res){
   if (!pipe.steps.length) return res.json({ ok:false, error:'empty pipeline' });
 
   const results = [];
-  let items = null; // יצא מטריגר
+  let items = null;
 
-  for (let idx=0; idx<pipe.steps.length; idx++){
-    const step = pipe.steps[idx];
+  for (const step of pipe.steps){
     const unit = step.action || step.trigger || {};
     const type = unit.type;
     const params = unit.params || {};
     const adapter = registry[type];
 
     if (!type || !adapter){
-      results.push({ ok:false, type: type || '(missing type)', note: adapter ? 'type missing' : 'no adapter found' });
+      results.push({ ok:false, type: type || '(missing type)', note: 'no adapter found' });
       continue;
     }
 
-    // טריגר – מריצים פעם אחת ושומרים items
     if (step.trigger){
       try {
         const out = await callAdapter(adapter, mode === 'dryRun' ? 'dryRun' : 'execute', { items: null }, params);
@@ -64,7 +60,6 @@ async function run(mode, req, res){
       continue;
     }
 
-    // אקשן – אם יש items -> מריץ לכל item, עם רינדור פרמטרים לפי {{item.*}}
     if (step.action){
       if (Array.isArray(items) && items.length){
         let okCount = 0, appended = 0;
@@ -77,20 +72,10 @@ async function run(mode, req, res){
             if (out && out.ok !== false) okCount++;
             if (out && (out.appended || out.updated)) appended += (out.appended || out.updated || 0);
             if (out && out.sid) sids.push(out.sid);
-          } catch (e) {
-            // ממשיכים לשאר הפריטים
-          }
+          } catch (e) { /* ממשיכים לפריט הבא */ }
         }
-        results.push({
-          ok: okCount === items.length,
-          type,
-          processed: items.length,
-          succeeded: okCount,
-          appended,
-          sids: sids.length ? sids : undefined
-        });
+        results.push({ ok: okCount === items.length, type, processed: items.length, succeeded: okCount, appended, sids: sids.length ? sids : undefined });
       } else {
-        // בלי items – קריאה בודדת, אפשר גם רינדור לפי params בלבד
         const pRR = renderDeep(params, { item:{}, params });
         try {
           const out = await callAdapter(adapter, mode === 'dryRun' ? 'dryRun' : 'execute', {}, pRR);
@@ -102,15 +87,12 @@ async function run(mode, req, res){
     }
   }
 
-  // סיכום
   const checked  = results.filter(r => r.type === 'gmail.unreplied' && r.checked).reduce((a,b)=>a+b.checked, 0);
   const matched  = results.filter(r => r.type === 'gmail.unreplied' && r.matched).reduce((a,b)=>a+b.matched, 0);
   const appended = results.filter(r => r.type === 'sheets.append' && (r.appended || r.updated)).reduce((a,b)=>a+(b.appended||b.updated||0), 0);
   const okAll    = results.every(r => r.ok !== false);
 
-  return res.json({ ok:true, mode: mode === 'dryRun' ? 'dry-run' : 'execute', summary: {
-    steps: pipe.steps.length, ok: okAll, checked, matched, appended
-  }, results });
+  return res.json({ ok:true, mode: mode === 'dryRun' ? 'dry-run' : 'execute', summary: { steps: pipe.steps.length, ok: okAll, checked, matched, appended }, results });
 }
 
 router.post('/dry-run',  (req,res) => run('dryRun',  req,res));
