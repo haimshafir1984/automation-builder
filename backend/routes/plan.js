@@ -4,7 +4,11 @@ const fetch = require('node-fetch');
 const router = express.Router();
 
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434';
-const OLLAMA_MODEL    = process.env.OLLAMA_MODEL || 'phi3:mini'; // ברירת מחדל נוחה
+const OLLAMA_MODEL    = process.env.OLLAMA_MODEL || 'phi3:mini';
+
+// ברירות מחדל מה-ENV
+const DEFAULT_SPREADSHEET_ID = process.env.DEFAULT_SPREADSHEET_ID || null;
+const DEFAULT_WHATSAPP_TO    = process.env.TWILIO_WHATSAPP_TO || process.env.WHATSAPP_TO || null;
 
 function toLowerSafe(s){ return String(s || '').toLowerCase(); }
 
@@ -18,8 +22,7 @@ function detectEntities(text){
   const hours = hoursMatch ? Number(hoursMatch[1]) : 10;
   const hasWhatsapp = /וואטסאפ|whatsapp/.test(t);
   const hasSheets   = /גוגל.?שיט|שיט|sheets|google.?sheets/.test(t);
-  const newerMatch = t.match(/חודש|30/);
-  const newerThanDays = newerMatch ? 30 : 30;
+  const newerThanDays = 30;
 
   // spreadsheet id (גס)
   const sheetIdMatch = text.match(/[A-Za-z0-9-_]{20,}/);
@@ -32,9 +35,7 @@ function salvageJson(s){
   if (!s) return null;
   try { return JSON.parse(s); } catch {}
   const a = s.indexOf('{'); const b = s.lastIndexOf('}');
-  if (a >= 0 && b > a) {
-    try { return JSON.parse(s.slice(a, b+1)); } catch {}
-  }
+  if (a >= 0 && b > a) { try { return JSON.parse(s.slice(a, b+1)); } catch {} }
   return null;
 }
 
@@ -42,10 +43,13 @@ async function askOllama({ baseUrl, model, prompt }){
   const res = await fetch(`${baseUrl.replace(/\/$/,'')}/api/generate`, {
     method: 'POST',
     headers: { 'content-type':'application/json' },
-    body: JSON.stringify({ model, prompt, stream: false }) // ← חובה כדי לא לקבל JSON בזרם
+    body: JSON.stringify({ model, prompt, stream: false })
   });
-  if (!res.ok) throw new Error(`ollama http ${res.status}`);
-  const json = await res.json(); // { response: "..." }
+  if (!res.ok) {
+    const text = await res.text().catch(()=> '');
+    throw new Error(`ollama http ${res.status} ${text.slice(0,120)}`);
+  }
+  const json = await res.json();
   return (json.response || '').trim();
 }
 
@@ -55,7 +59,10 @@ router.post('/from-text', async (req, res) => {
 
   const provider = (req.body?.provider || '').toLowerCase();
   const model = req.body?.model || OLLAMA_MODEL;
-  const defaults = req.body?.defaults || {};
+  const defaults = Object.assign({}, req.body?.defaults || {}, {
+    spreadsheetId: DEFAULT_SPREADSHEET_ID || null,
+    whatsappTo:    DEFAULT_WHATSAPP_TO || null,
+  });
 
   // 1) נסה Ollama לבנות steps מלאים
   if (provider === 'ollama') {
@@ -71,30 +78,34 @@ router.post('/from-text', async (req, res) => {
       const raw = await askOllama({ baseUrl: OLLAMA_BASE_URL, model, prompt });
       const plan = salvageJson(raw);
       if (plan && Array.isArray(plan.steps)) {
-        // הוסף ערכי ברירת מחדל אם חסר
+        // ברירות מחדל לשדות חסרים
         plan.steps.forEach(st => {
-          const unit = st.trigger || st.action;
-          if (!unit || !unit.params) return;
+          const unit = st.trigger || st.action; if (!unit || !unit.params) return;
           if (unit.type === 'sheets.append') {
             unit.params.spreadsheetId = unit.params.spreadsheetId || defaults.spreadsheetId || null;
             unit.params.sheetName     = unit.params.sheetName || 'SLA';
             if (!unit.params.row) unit.params.row = { from:'{{item.from}}', subject:'{{item.subject}}', ageHours:'{{item.ageHours}}' };
           }
+          if (unit.type === 'whatsapp.send') {
+            unit.params.to = unit.params.to || defaults.whatsappTo || null;
+            unit.params.text = unit.params.text || 'התראה: מייל שלא נענה בזמן SLA';
+          }
         });
+
         const missing = [];
         plan.steps.forEach((st, idx) => {
           const unit = st.trigger || st.action || {};
           const p = unit.params || {};
-          Object.entries(p).forEach(([k,v]) => { if (v === null || v === '') missing.push({ step: idx, key: k }); });
+          Object.entries(p).forEach(([k,v]) => { if (v === null || v === '') missing.push({ step: idx, key: k, type: unit.type }); });
         });
         return res.json({ ok:true, type:'pipeline', proposal: plan, missing, provider:'ollama' });
       }
     } catch (e) {
-      // נמשיך לפולבק
+      // אם Ollama נפל (ngrok סגור / HTML), נרד לפולבק
     }
   }
 
-  // 2) Heuristic fallback — תמיד בונה 3 צעדים (Gmail -> Sheets -> WhatsApp)
+  // 2) Heuristic fallback — תמיד בונה 3 צעדים
   const ent = detectEntities(text);
   const steps = [
     { trigger: { type:'gmail.unreplied', params: {
@@ -109,7 +120,7 @@ router.post('/from-text', async (req, res) => {
       row: { from:'{{item.from}}', subject:'{{item.subject}}', ageHours:'{{item.ageHours}}' }
     }}},
     { action: { type:'whatsapp.send', params: {
-      to: ent.toPhone || null,
+      to: ent.toPhone || defaults.whatsappTo || null,
       text: 'התראה: מייל שלא נענה בזמן SLA'
     }}}
   ];
@@ -117,7 +128,7 @@ router.post('/from-text', async (req, res) => {
   steps.forEach((st, idx) => {
     const unit = st.trigger || st.action || {};
     const p = unit.params || {};
-    Object.entries(p).forEach(([k,v]) => { if (v === null || v === '') missing.push({ step: idx, key: k }); });
+    Object.entries(p).forEach(([k,v]) => { if (v === null || v === '') missing.push({ step: idx, key: k, type: unit.type }); });
   });
   return res.json({ ok:true, type:'pipeline', proposal:{ steps }, missing, provider: provider || 'heuristic' });
 });

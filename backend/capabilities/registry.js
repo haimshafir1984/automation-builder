@@ -4,7 +4,7 @@ module.exports = {
   'gmail.unreplied': require('./adapters/gmail').unreplied,
 
   // Actions
-  'sheets.append': require('./adapters/sheets').append,
-  'http.request':  require('./adapters/http').request,
-  'whatsapp.send': require('./adapters/whatsapp').send,
+  'sheets.append':   require('./adapters/sheets').append,
+  'http.request':    require('./adapters/http').request,
+  'whatsapp.send':   require('./adapters/whatsapp').send,
 };
