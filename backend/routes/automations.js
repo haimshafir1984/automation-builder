@@ -1,70 +1,59 @@
 ﻿// backend/routes/automations.js
 const express = require('express');
 const router = express.Router();
+const registry = require('../capabilities/registry');
 
-function normalizeSteps(body) {
-  if (Array.isArray(body?.steps)) return body.steps;
-  if (Array.isArray(body?.proposal?.steps)) return body.proposal.steps;
-  return null;
+function normalizePipeline(body){
+  // תומך גם ב- {steps:[...]} וגם ב- {pipeline:{steps:[...]}}
+  if (body && Array.isArray(body.steps)) return { steps: body.steps };
+  if (body && body.pipeline && Array.isArray(body.pipeline.steps)) return { steps: body.pipeline.steps };
+  return { steps: [] };
 }
 
-// טען registry אמיתי
-let registry = null;
-try {
-  registry = require('../capabilities/registry');
-  console.log('[automations] loaded real registry');
-} catch (e) {
-  console.warn('[automations] registry load failed:', e.message);
-  registry = null;
-}
+async function runStep(step, mode, ctx){
+  const unit = step.action || step.trigger || {};
+  const type = unit.type;
+  if (!type) return { ok:false, error:'missing type' };
 
-function getActionFn(type, mode) {
-  const [cat, name] = String(type || '').split('.');
-  if (!registry || !registry[cat] || !registry[cat][name]) return null;
-  return registry[cat][name][mode || 'execute'];
-}
-
-router.post('/dry-run', async (req, res) => {
-  const steps = normalizeSteps(req.body);
-  if (!steps) return res.json({ ok: false, error: 'empty pipeline' });
-  const ctx = {}; const results = []; let appended=0, checked=0, matched=0;
-  for (const step of steps) {
-    if (step.action) {
-      const fn = getActionFn(step.action.type, 'dryRun');
-      if (!fn) { results.push({ ok:false, type: step.action.type, note: 'no adapter found (dry-run)' }); continue; }
-      const r = await fn(ctx, step.action.params || {});
-      results.push({ ok: true, type: step.action.type, dryRun: true, ...r });
-    } else if (step.trigger) {
-      results.push({ ok: true, type: step.trigger.type, dryRun: true, items: 0 });
-    }
+  const adapter = registry[type];
+  if (!adapter){
+    const note = (mode === 'dryRun') ? 'no adapter found (dry-run)' : 'no adapter found';
+    return { ok:false, type, note };
   }
-  return res.json({ ok: true, mode: 'dry-run', summary: { steps: steps.length, ok: true, checked, matched, appended }, results });
-});
+  const fn = adapter[mode] || adapter.execute;
+  if (!fn) return { ok:false, type, error:`adapter missing ${mode} handler` };
 
-router.post('/execute', async (req, res) => {
-  const steps = normalizeSteps(req.body);
-  if (!steps) return res.json({ ok: false, error: 'empty pipeline' });
-  const ctx = {}; const results = []; let appended=0, checked=0, matched=0;
-
-  for (const step of steps) {
-    if (step.trigger) {
-      ctx.items = [];
-      results.push({ ok: true, type: step.trigger.type, items: ctx.items.length });
-      continue;
-    }
-    if (step.action) {
-      const fn = getActionFn(step.action.type, 'execute');
-      if (!fn) { results.push({ ok:false, type: step.action.type, note: 'no adapter found' }); continue; }
-      try {
-        const r = await fn(ctx, step.action.params || {});
-        if (typeof r.appended === 'number') appended += r.appended;
-        results.push({ ok: true, type: step.action.type, dryRun: false, ...r });
-      } catch (e) {
-        results.push({ ok: false, type: step.action.type, error: e.message });
-      }
-    }
+  const params = unit.params || {};
+  try {
+    const out = await fn(ctx, params);
+    return { type, ...out };
+  } catch(e){
+    return { ok:false, type, error:String(e.message||e) };
   }
-  return res.json({ ok: true, mode: 'execute', summary: { steps: steps.length, ok: true, checked, matched, appended }, results });
-});
+}
+
+async function run(mode, req, res){
+  const pipe = normalizePipeline(req.body || {});
+  if (!pipe.steps.length) return res.json({ ok:false, error:'empty pipeline' });
+
+  const ctx = {}; // future: auth/userKey וכו׳
+  const results = [];
+  for (const step of pipe.steps){
+    const r = await runStep(step, mode, ctx);
+    results.push(r);
+  }
+
+  const summary = {
+    steps: pipe.steps.length,
+    ok: results.every(r => r.ok !== false),
+    checked: results.find(r => r.type === 'gmail.unreplied')?.checked || 0,
+    matched: results.find(r => r.type === 'gmail.unreplied')?.matched || 0,
+    appended: results.find(r => r.type === 'sheets.append')?.updated || results.find(r => r.type === 'sheets.append')?.appended || 0,
+  };
+  return res.json({ ok:true, mode: mode === 'dryRun' ? 'dry-run' : 'execute', summary, results });
+}
+
+router.post('/dry-run',  (req,res) => run('dryRun',  req,res));
+router.post('/execute',  (req,res) => run('execute', req,res));
 
 module.exports = router;
