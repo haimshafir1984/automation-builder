@@ -1,46 +1,82 @@
 // backend/routes/google.js
 const express = require('express');
 const router = express.Router();
-const { getAuthUrl, exchangeCodeForTokens, getGmailClient } = require('../lib/googleAuth');
+const {
+  getAuthUrl, exchangeCodeForTokens, getGmailClient,
+  getStoredRefreshToken, deleteRefreshToken
+} = require('../lib/googleAuth');
+const store = require('../lib/tokenStore');
 
-router.get('/oauth/url', (req, res) => {
+function key(req){ return (req.query.userKey || 'default').toString(); }
+
+// בקשת קישור OAuth (אם כבר מחוברים – מחזיר connected:true)
+router.get('/oauth/url', async (req, res) => {
   try {
-    const url = getAuthUrl();
-    res.json({ ok: true, url });
+    const userKey = key(req);
+    const force = String(req.query.force||'') === '1';
+    const existing = await getStoredRefreshToken(userKey);
+    if (existing && !force) return res.json({ ok:true, connected:true, url:null, userKey });
+    const url = await getAuthUrl({ force, userKey });
+    res.json({ ok:true, connected:false, url, userKey });
   } catch (e) {
-    res.status(400).json({ ok: false, error: String(e.message || e) });
+    res.status(400).json({ ok:false, error:String(e.message||e) });
   }
 });
 
+// callback – קורא state כדי לדעת userKey, ושומר ל-store
 router.get('/oauth/callback', async (req, res) => {
   try {
     const code = req.query.code;
-    if (!code) return res.status(400).send('Missing code param');
-    const tokens = await exchangeCodeForTokens(code);
-
-    // הצג למשתמש את ה-refresh_token כדי שיעתיק ל-ENV שברנדר.
-    // (בחשבון חינמי אין איפה לשמור בטוח בצד שרת)
-    const html = `
-      <h2>OAuth Success ✅</h2>
-      <p>Copy this <b>refresh_token</b> into Render Environment as <code>GMAIL_REFRESH_TOKEN</code>, then Redeploy:</p>
-      <pre style="white-space:pre-wrap;border:1px solid #ccc;padding:12px">${tokens.refresh_token || '(no refresh_token — if empty, delete app access and run again with prompt=consent)'}</pre>
-      <p>Access token (temporary):</p>
-      <pre style="white-space:pre-wrap;border:1px solid #ccc;padding:12px">${tokens.access_token || ''}</pre>
-    `;
-    res.send(html);
+    const state = decodeURIComponent(req.query.state || 'default');
+    if (!code) return res.status(400).send('Missing code');
+    const tokens = await exchangeCodeForTokens(code, state);
+    const note = tokens.refresh_token ? 'נשמר refresh_token למשתמש '+state : 'אין refresh_token חדש (קיים כבר).';
+    res.send(`
+      <meta charset="utf-8" />
+      <h2>מחובר ל-Gmail ✅</h2>
+      <p>${note}</p>
+      <p><a href="/" style="font-family:system-ui;display:inline-block;margin-top:12px;">⬅ חזרה לאפליקציה</a></p>
+    `);
   } catch (e) {
-    res.status(500).send('OAuth error: ' + String(e.message || e));
+    res.status(500).send('OAuth error: ' + String(e.message||e));
   }
 });
 
-// בדיקה בסיסית
+// מי אני (פר־משתמש)
 router.get('/me', async (req, res) => {
   try {
-    const { gmail, me } = await getGmailClient();
-    res.json({ ok: true, me });
+    const { me } = await getGmailClient(key(req));
+    res.json({ ok:true, me });
   } catch (e) {
-    res.status(400).json({ ok: false, error: String(e.message || e) });
+    res.status(400).json({ ok:false, error:String(e.message||e) });
   }
+});
+
+// יש/אין טוקן (פר־משתמש)
+router.get('/tokens', async (req, res) => {
+  try {
+    const exists = !!(await getStoredRefreshToken(key(req)));
+    res.json({ ok:true, exists });
+  } catch (e) {
+    res.status(400).json({ ok:false, error:String(e.message||e) });
+  }
+});
+
+// דיאגנוסטיקה
+router.get('/debug', async (req, res) => {
+  try {
+    const kind = await store.kind();
+    const exists = !!(await getStoredRefreshToken(key(req)));
+    res.json({ ok:true, store:kind, userKey:key(req), refreshTokenExists:exists });
+  } catch (e) {
+    res.status(400).json({ ok:false, error:String(e.message||e) });
+  }
+});
+
+// התנתקות (פר־משתמש)
+router.post('/disconnect', async (req, res) => {
+  try { await deleteRefreshToken(key(req)); res.json({ ok:true }); }
+  catch (e) { res.status(400).json({ ok:false, error:String(e.message||e) }); }
 });
 
 module.exports = router;
