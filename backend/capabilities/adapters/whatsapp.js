@@ -1,75 +1,72 @@
 // backend/capabilities/adapters/whatsapp.js
-const fetch = require('node-fetch');
+
 const twilio = require('twilio');
 
-function normalizeWhats(s) {
-  if (!s) return s;
-  return /^whatsapp:/.test(s) ? s : `whatsapp:${s}`;
+// Detect provider (Meta Cloud vs Twilio). Here we use Twilio if present.
+function detectProvider() {
+  const hasMeta = !!(process.env.WHATSAPP_TOKEN && process.env.WHATSAPP_PHONE_ID);
+  const hasTwilio = !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_WHATSAPP_FROM);
+  if (hasMeta) return 'meta';   // לא ממומש כאן. נשאר לעתיד.
+  if (hasTwilio) return 'twilio';
+  return null;
 }
 
-/* ---------- Meta WhatsApp Cloud API ---------- */
-const GRAPH = 'https://graph.facebook.com/v20.0';
-async function metaSend(params = {}) {
-  const token   = process.env.WHATSAPP_TOKEN;
-  const phoneId = process.env.WHATSAPP_PHONE_ID;
-  if (!token || !phoneId) return { ok:false, error:'Meta WhatsApp not configured (WHATSAPP_TOKEN & WHATSAPP_PHONE_ID)' };
-
-  const { to, text, template } = params;
-  if (!to)   return { ok:false, error:'to is required' };
-  if (!text && !template) return { ok:false, error:'text or template is required' };
-
-  const url = `${GRAPH}/${phoneId}/messages`;
-  const body = template
-    ? { messaging_product:'whatsapp', to, type:'template', template: { name: template, language: { code:'he' } } }
-    : { messaging_product:'whatsapp', to, type:'text', text: { body: text } };
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-  const json = await res.json().catch(()=>null);
-  return { ok: res.ok, status: res.status, response: json };
+function normalizeToPhone(raw, fallback) {
+  let v = (raw || fallback || '').toString().trim();
+  if (!v) return null;
+  // הסר רווחים/מקפים ותווים מיותרים
+  v = v.replace(/[^\d+]/g, '');
+  // ודא E.164: חייב להתחיל ב-+ ולפחות 8 ספרות אחרי הקידומת
+  if (!/^\+[1-9]\d{7,14}$/.test(v)) return null;
+  // הוסף prefix של וואטסאפ אם חסר
+  return v.startsWith('whatsapp:') ? v : ('whatsapp:' + v);
 }
 
-/* ---------- Twilio WhatsApp ---------- */
-async function twilioSend(params = {}) {
-  const sid   = process.env.TWILIO_ACCOUNT_SID;
-  const token = process.env.TWILIO_AUTH_TOKEN;
-  const from  = process.env.TWILIO_WHATSAPP_FROM || process.env.WHATSAPP_FROM;
-  if (!sid || !token || !from) {
-    return { ok:false, error:'Twilio not configured (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM/WHATSAPP_FROM)' };
+async function sendTwilio(_ctx, params, mode='execute') {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken  = process.env.TWILIO_AUTH_TOKEN;
+  const fromWhats  = process.env.TWILIO_WHATSAPP_FROM;  // למשל: whatsapp:+14155238886
+  const defaultTo  = process.env.TWILIO_WHATSAPP_TO || process.env.DEFAULT_WHATSAPP_TO || null;
+
+  const to = normalizeToPhone(params.to, defaultTo);
+  const body = params.text || params.message || params.body || 'שלום!';
+
+  if (mode === 'dryRun') {
+    if (!to) {
+      return { ok:false, provider:'twilio', dryRun:true, error:'missing or invalid WhatsApp To (E.164). Example: +9725XXXXXXX' };
+    }
+    return { ok:true, provider:'twilio', dryRun:true, to, from: fromWhats, body };
   }
 
-  const { to, text } = params;
-  if (!to || !text) return { ok:false, error:'to and text are required' };
+  if (!to) throw new Error('The "to" number is missing or invalid. Use E.164 like +9725XXXXXXX');
 
-  const client = twilio(sid, token);
-  const res = await client.messages.create({
-    from: normalizeWhats(from),
-    to: normalizeWhats(to),
-    body: text
+  const client = twilio(accountSid, authToken);
+  const msg = await client.messages.create({
+    from: fromWhats,
+    to,
+    body
   });
-  return { ok:true, sid: res.sid, status: res.status };
-}
 
-/* ---------- Router ---------- */
-function providerName() {
-  if (process.env.WHATSAPP_TOKEN && process.env.WHATSAPP_PHONE_ID) return 'meta';
-  if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) return 'twilio';
-  return 'none';
+  return { ok:true, provider:'twilio', sid: msg.sid, to, from: fromWhats, status: msg.status || 'queued' };
 }
 
 module.exports = {
-  send: {
-    async dryRun(_ctx, params={}) {
-      return { ok:true, dryRun:true, provider: providerName(), params };
-    },
-    async execute(_ctx, params={}) {
-      const p = providerName();
-      if (p === 'meta')   return metaSend(params);
-      if (p === 'twilio') return twilioSend(params);
-      return { ok:false, error:'No WhatsApp provider configured (set Meta or Twilio env vars)' };
-    }
-  }
+  // Dry run
+  async dryRun(ctx, params) {
+    const provider = detectProvider();
+    if (provider === 'twilio') return sendTwilio(ctx, params, 'dryRun');
+    if (provider === 'meta')   return { ok:false, provider:'meta', dryRun:true, note:'Meta provider not implemented in this adapter yet' };
+    return { ok:false, dryRun:true, error:'No WhatsApp provider configured (Twilio/Meta)' };
+  },
+
+  // Execute
+  async execute(ctx, params) {
+    const provider = detectProvider();
+    if (provider === 'twilio') return sendTwilio(ctx, params, 'execute');
+    if (provider === 'meta')   throw new Error('Meta provider not implemented yet');
+    throw new Error('No WhatsApp provider configured (Twilio/Meta)');
+  },
+
+  // לצורך תאימות אם הריצה קוראת ישירות לשם .send
+  async send(ctx, params) { return module.exports.execute(ctx, params); }
 };
