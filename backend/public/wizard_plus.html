@@ -1,252 +1,188 @@
 <!doctype html>
 <html lang="he" dir="rtl">
 <head>
-  <meta charset="utf-8">
-  <title>אשף אוטומציה</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Wizard Plus</title>
+  <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    :root { --bg:#0f172a; --card:#111827; --muted:#1f2937; --text:#e5e7eb; --sub:#9ca3af; --accent:#22c55e; --warn:#f59e0b; --err:#ef4444; --ok:#10b981; --border:#374151; }
-    html,body { margin:0; padding:0; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; }
-    .wrap { max-width:1200px; margin:0 auto; padding:24px; }
-    h1 { font-size:20px; margin:0 0 16px; }
-    .row { display:flex; gap:16px; align-items:stretch; flex-wrap:wrap; }
-    .col { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; flex:1 1 360px; }
-    label { display:block; font-size:13px; color:var(--sub); margin-bottom:6px; }
-    input[type=text], textarea, select {
-      width:100%; box-sizing:border-box; background:#0b1220; color:var(--text);
-      border:1px solid var(--border); border-radius:10px; padding:10px 12px; outline:none;
-    }
-    textarea { min-height:160px; resize:vertical; }
-    .small { font-size:12px; color:var(--sub); }
-    .btns { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
-    button {
-      background:#1e293b; color:var(--text); border:1px solid var(--border); padding:8px 12px;
-      border-radius:999px; cursor:pointer;
-    }
-    button.primary{ background:var(--accent); color:#04110a; border-color:#0d5a33; font-weight:600; }
-    button.warn{ background:var(--warn); color:#1f1905; border-color:#7c5d07; }
-    button.ghost{ background:#0b1220; }
-    pre { white-space:pre-wrap; word-break:break-word; background:#0b1220; border:1px solid var(--border); padding:12px; border-radius:10px; }
-    .kvs { display:grid; grid-template-columns: 140px 1fr; gap:8px 12px; }
-    .pill { display:inline-block; padding:2px 8px; border:1px solid var(--border); border-radius:999px; font-size:12px; color:var(--sub); }
-    .ok { color:var(--ok); } .err{ color:var(--err); }
-    .divider{ height:1px; background:var(--border); margin:12px 0; opacity:.7; }
+    body { background: #0b1020; }
+    .bubble { border-radius: 1rem; padding: 0.75rem 1rem; }
+    .bubble.user { background: #233055; color: #fff; }
+    .bubble.bot { background: #0f172a; color: #e2e8f0; border: 1px solid #334155; }
+    .btn { background: #4f46e5; color: #fff; padding: 0.5rem 0.9rem; border-radius: 0.75rem; }
+    .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .field { background: #0f172a; border: 1px solid #334155; color: #e2e8f0; border-radius: 0.75rem; padding: 0.5rem 0.75rem; }
   </style>
 </head>
-<body>
-  <div class="wrap">
-    <h1>אשף אוטומציה</h1>
+<body class="min-h-screen text-slate-100">
+  <div class="max-w-3xl mx-auto px-4 py-6">
+    <header class="flex items-center justify-between gap-4">
+      <h1 class="text-2xl font-bold">Wizard Plus</h1>
+      <div id="googleStatus" class="text-sm opacity-80">בודק חיבור לגוגל…</div>
+    </header>
 
-    <!-- טופס קלט -->
-    <div class="row">
-      <div class="col" style="flex:2 1 520px">
-        <label>טקסט חופשי</label>
-        <textarea id="userText" placeholder="לדוגמה: כל מייל מכתובת X בחודש האחרון שלא נענה 10 שעות — הכנס לגוגל שיט ושלח לי וואטסאפ."></textarea>
-
-        <div class="row" style="margin-top:10px">
-          <div class="col" style="flex:1 1 220px">
-            <label>Ollama URL (אופציונלי)</label>
-            <input id="ollamaUrl" type="text" placeholder="https://xxxxx.ngrok-free.app">
-            <div class="small">כששדה זה ריק, נשתמש בפולבאק היריסטי (ללא LLM).</div>
-          </div>
-          <div class="col" style="flex:1 1 140px">
-            <label>Model (אופציונלי)</label>
-            <input id="ollamaModel" type="text" placeholder="phi3:mini">
-          </div>
-        </div>
-
-        <div class="btns">
-          <button class="primary" onclick="planFromText()">🛠️ הפק תכנון</button>
-          <button class="ghost" onclick="clearAll()">נקה</button>
-        </div>
-
-        <div class="divider"></div>
-
-        <label>חיבור Gmail (OAuth)</label>
-        <div class="kvs">
-          <div>userKey</div>
-          <div><input id="userKey" type="text" placeholder="למשל: moshe" value="default"></div>
-          <div></div>
-          <div class="btns">
-            <button onclick="connectGoogle()">התחבר ל-Gmail</button>
-            <button class="ghost" onclick="checkGoogle()">בדוק סטטוס</button>
-            <span id="googleState" class="pill">לא מחובר</span>
-          </div>
+    <main class="mt-6 space-y-4">
+      <div id="chat" class="space-y-3">
+        <div class="bubble bot">
+          כתבו בשפה חופשית מה תרצו שאעשה עבורכם. אני אבקש פרטים שחסרים ואז אריץ אוטומציה.
         </div>
       </div>
 
-      <!-- JSON תכנון -->
-      <div class="col" style="flex:1 1 380px">
-        <label>Plan JSON</label>
-        <textarea id="planJson" placeholder='ימולא אוטומטית לאחר "הפק תכנון". ניתן לעריכה ידנית.'></textarea>
-        <div class="btns">
-          <button onclick="prettify()">ייפוי JSON</button>
-          <button onclick="minify()">דחיסת JSON</button>
-        </div>
+      <div class="flex gap-2">
+        <input id="freeText" class="field flex-1" placeholder="לדוגמה: כל מייל מחודש אחרון ממיכל שלא נענה 10 שעות → הכנס ל-SLA" />
+        <button id="btnPlan" class="btn">תכנן</button>
+        <button id="btnRun" class="btn" disabled>הרץ</button>
       </div>
 
-      <!-- שדות חסרים + ריצה -->
-      <div class="col" style="flex:1 1 380px">
-        <label>שדות חסרים</label>
-        <div id="missingBox" class="small">עדיין אין תכנון.</div>
-        <div class="btns">
-          <button class="ghost" onclick="applyMissing()">החלת הערכים לתכנון</button>
-        </div>
-
-        <div class="divider"></div>
-
-        <label>הרצה</label>
-        <div class="btns">
-          <button onclick="runPipeline('dry')">🧪 Dry-Run</button>
-          <button class="primary" onclick="runPipeline('exec')">🚀 Execute</button>
-        </div>
-
-        <div class="divider"></div>
-
-        <label>פלט</label>
-        <pre id="out">—</pre>
-      </div>
-    </div>
+      <div id="missingFields" class="grid gap-2 md:grid-cols-2"></div>
+    </main>
   </div>
 
   <script>
-    // -------- Utilities --------
-    const $ = s => document.querySelector(s);
-    function show(json, el='#out'){ $(el).textContent = typeof json === 'string' ? json : JSON.stringify(json, null, 2); }
-    function toastOk(msg){ show(msg, '#out'); }
-    function toastErr(e){ show({ ok:false, error: String(e?.message || e) }, '#out'); }
+    const chat = document.getElementById('chat');
+    const freeText = document.getElementById('freeText');
+    const btnPlan = document.getElementById('btnPlan');
+    const btnRun = document.getElementById('btnRun');
+    const missingFields = document.getElementById('missingFields');
+    const googleStatus = document.getElementById('googleStatus');
 
-    // -------- Google OAuth --------
-    async function connectGoogle(){
-      try{
-        const userKey = ($('#userKey').value || 'default').trim();
-        const r = await fetch(`/api/google/oauth/url?userKey=${encodeURIComponent(userKey)}`);
-        const j = await r.json();
-        if(!j.ok) throw new Error(j.error || 'oauth url error');
-        if(j.connected){ $('#googleState').textContent = 'מחובר'; return; }
-        if(j.url) window.open(j.url, '_blank');
-      }catch(e){ toastErr(e); }
-    }
-    async function checkGoogle(){
-      try{
-        const userKey = ($('#userKey').value || 'default').trim();
-        const r = await fetch(`/api/google/me?userKey=${encodeURIComponent(userKey)}`);
-        const j = await r.json();
-        if(j.ok){ $('#googleState').textContent = 'מחובר (' + (j.me || 'me') + ')'; toastOk(j); }
-        else { $('#googleState').textContent = 'לא מחובר'; toastOk(j); }
-      }catch(e){ toastErr(e); }
-    }
-
-    // -------- Planner --------
-    async function planFromText(){
-      const text = ($('#userText').value || '').trim();
-      const baseUrl = ($('#ollamaUrl').value || '').trim();
-      const model   = ($('#ollamaModel').value || '').trim();
-      if(!text){ alert('נא להזין טקסט.'); return; }
-
-      const payload = { text };
-      if(baseUrl) payload.baseUrl = baseUrl;
-      if(model)   payload.model   = model;
-
-      let j;
-      try{
-        const r = await fetch('/api/plan/from-text', {
-          method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
-        });
-        j = await r.json();
-      }catch(e){
-        // פולבאק מקומי במקרה קצה (לא נדרש אם השרת תקין)
-        j = { ok:true, provider:'fallback-client', proposal:{ steps: [] }, missing: [] };
-      }
-
-      try{
-        if(j && j.ok && j.proposal && Array.isArray(j.proposal.steps) && j.proposal.steps.length){
-          $('#planJson').value = JSON.stringify(j.proposal, null, 2);
-        } else {
-          // אל תשאיר ריק – תמנע empty pipeline
-          $('#planJson').value = JSON.stringify({ steps: [] }, null, 2);
-        }
-        renderMissing(j?.missing || []);
-        if(j?.nlpError){
-          const note = 'NLP note: ' + j.nlpError + ' · provider=' + (j.provider || '—');
-          const prev = $('#out').textContent;
-          $('#out').textContent = (prev && prev !== '—' ? prev + "\n" : '') + note;
-        }
-      }catch(e){ toastErr(e); }
-    }
-
-    function prettify(){
-      try{ $('#planJson').value = JSON.stringify(JSON.parse($('#planJson').value || '{}'), null, 2); }
-      catch{ /* ignore */ }
-    }
-    function minify(){
-      try{ $('#planJson').value = JSON.stringify(JSON.parse($('#planJson').value || '{}')); }
-      catch{ /* ignore */ }
-    }
-    function clearAll(){
-      $('#userText').value = '';
-      $('#planJson').value = '';
-      $('#missingBox').innerHTML = 'נוקה.';
-      $('#out').textContent = '—';
-    }
-
-    // -------- Missing fields UI --------
+    let lastPlan = null;
     let lastMissing = [];
-    function renderMissing(missing){
-      lastMissing = missing || [];
-      const box = $('#missingBox');
-      box.innerHTML = '';
-      if(!lastMissing.length){ box.textContent = '✓ אין שדות חסרים'; return; }
+    let lastText = "";
 
-      lastMissing.forEach((m, i) => {
-        const id = `missing_${m.step}_${m.key}`; // מזהה ייחודי
-        const row = document.createElement('div');
-        row.style.marginBottom = '8px';
-        row.innerHTML = `
-          <div class="small">צעד #${m.step} — שדה נדרש: <b>${m.key}</b></div>
-          <input type="text" id="${id}" placeholder="הכנס ערך עבור ${m.key}">
-        `;
-        box.appendChild(row);
-      });
-      const hint = document.createElement('div');
-      hint.className = 'small';
-      hint.style.marginTop = '6px';
-      hint.textContent = 'לאחר מילוי — לחץ "החלת הערכים לתכנון".';
-      box.appendChild(hint);
+    function addBubble(text, who='bot') {
+      const div = document.createElement('div');
+      div.className = `bubble ${who}`;
+      div.textContent = text;
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
     }
 
-    function applyMissing(){
-      try{
-        const plan = JSON.parse($('#planJson').value || '{"steps":[]}');
-        if(!Array.isArray(plan.steps)) plan.steps = [];
-        lastMissing.forEach(m => {
-          const el = document.getElementById(`missing_${m.step}_${m.key}`);
-          const val = (el && el.value || '').trim();
-          if(!plan.steps[m.step]) return;
-          const unit = plan.steps[m.step].action || plan.steps[m.step].trigger || {};
-          if(!unit.params) unit.params = {};
-          if(val) unit.params[m.key] = val;
-        });
-        $('#planJson').value = JSON.stringify(plan, null, 2);
-        renderMissing([]); // נקה לאחר יישום
-      }catch(e){ toastErr(e); }
-    }
-
-    // -------- Runner --------
-    async function runPipeline(mode){
-      try{
-        const txt = ($('#planJson').value || '').trim();
-        if(!txt){ alert('אין תכנון. הפק תכנון תחילה.'); return; }
-        let plan;
-        try{ plan = JSON.parse(txt); }catch{ alert('JSON לא תקין'); return; }
-        if(!plan.steps || !plan.steps.length){ alert('תכנון ריק (empty pipeline)'); return; }
-
-        const url = mode === 'dry' ? '/api/automations/dry-run' : '/api/automations/execute';
-        const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(plan) });
+    async function checkGoogle() {
+      try {
+        const r = await fetch('/api/google/me');
         const j = await r.json();
-        show(j);
-      }catch(e){ toastErr(e); }
+        if (j.ok) {
+          googleStatus.innerHTML = `מחובר כ- <b>${j.emailAddress}</b>`;
+        } else {
+          googleStatus.textContent = 'לא מחובר לגוגל';
+          offerLogin();
+        }
+      } catch(e) {
+        googleStatus.textContent = 'לא מחובר לגוגל';
+        offerLogin();
+      }
     }
+
+    function offerLogin() {
+      const a = document.createElement('a');
+      a.className = 'btn ml-2';
+      a.textContent = 'התחבר לגוגל';
+      a.href = '#';
+      a.onclick = async (e) => {
+        e.preventDefault();
+        const r = await fetch('/api/google/oauth/url');
+        const j = await r.json();
+        if (j.ok && j.url) window.location.href = j.url;
+      };
+      googleStatus.appendChild(a);
+    }
+
+    function renderMissing(missing) {
+      missingFields.innerHTML = '';
+      missing.forEach(m => {
+        const wrap = document.createElement('div');
+        wrap.className = 'space-y-1';
+        wrap.innerHTML = `
+          <label class="text-sm opacity-80">${m.label || m.key}</label>
+          <input class="field w-full" data-key="${m.key}" placeholder="${m.example || ''}" />
+        `;
+        missingFields.appendChild(wrap);
+      });
+    }
+
+    btnPlan.onclick = async () => {
+      const text = freeText.value.trim();
+      if (!text) return;
+      addBubble(text, 'user');
+      btnPlan.disabled = true;
+
+      try {
+        const r = await fetch('/api/plan/from-text', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text })
+        });
+        const j = await r.json();
+        if (!j.ok) throw new Error(j.error || 'PLAN_FAILED');
+        lastPlan = j.proposal || [];
+        lastMissing = j.missing || [];
+        lastText = text;
+
+        if (lastMissing.length) {
+          addBubble('חסרים כמה פרטים—מילאו אותם כאן ואז לחצו "הרץ".');
+          renderMissing(lastMissing);
+          btnRun.disabled = false;
+        } else {
+          addBubble('מוכן להרצה.');
+          btnRun.disabled = false;
+        }
+      } catch (e) {
+        console.error(e);
+        addBubble('שגיאה בתכנון. נסו שוב או שנו ניסוח.');
+      } finally {
+        btnPlan.disabled = false;
+      }
+    };
+
+    btnRun.onclick = async () => {
+      btnRun.disabled = true;
+
+      const filled = {};
+      missingFields.querySelectorAll('input[data-key]').forEach(inp => {
+        filled[inp.dataset.key] = inp.value.trim();
+      });
+
+      const steps = (lastPlan || []).map(s => {
+        const copy = JSON.parse(JSON.stringify(s));
+        if (copy.trigger?.params) {
+          for (const k of Object.keys(copy.trigger.params)) {
+            if (filled[k]) copy.trigger.params[k] = filled[k];
+          }
+        }
+        if (copy.action?.params) {
+          for (const k of Object.keys(copy.action.params)) {
+            if (filled[k]) copy.action.params[k] = filled[k];
+          }
+        }
+        return copy;
+      });
+
+      try {
+        const r = await fetch('/api/automations/execute', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: lastText, steps })
+        });
+        const j = await r.json();
+        if (!j.ok) {
+          if (j.error === 'MISSING_FIELDS') {
+            renderMissing(j.missing || []);
+            addBubble('עוד כמה פרטים חסרים—מלאו והפעילו שוב.');
+            btnRun.disabled = false;
+            return;
+          }
+          throw new Error(j.error || 'EXECUTION_FAILED');
+        }
+        addBubble('בוצע! בדקו את הגיליון/היעד.');
+      } catch (e) {
+        console.error(e);
+        addBubble('שגיאה בהרצה. נסו שוב.');
+      }
+    };
+
+    checkGoogle();
   </script>
 </body>
 </html>
