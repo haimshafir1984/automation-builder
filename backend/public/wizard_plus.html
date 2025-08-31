@@ -12,6 +12,7 @@
     .bubble.bot { background: #0f172a; color: #e2e8f0; border: 1px solid #334155; }
     .btn { background: #4f46e5; color: #fff; padding: 0.5rem 0.9rem; border-radius: 0.75rem; }
     .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .btn.ghost { background: transparent; border: 1px solid #334155; color: #e2e8f0; }
     .field { background: #0f172a; border: 1px solid #334155; color: #e2e8f0; border-radius: 0.75rem; padding: 0.5rem 0.75rem; }
   </style>
 </head>
@@ -19,7 +20,11 @@
   <div class="max-w-3xl mx-auto px-4 py-6">
     <header class="flex items-center justify-between gap-4">
       <h1 class="text-2xl font-bold">Wizard Plus</h1>
-      <div id="googleStatus" class="text-sm opacity-80">בודק חיבור לגוגל…</div>
+      <div class="flex items-center gap-2">
+        <div id="googleStatus" class="text-sm opacity-80">בודק חיבור לגוגל…</div>
+        <button id="btnGoogleLogin" class="btn hidden">התחבר לגוגל</button>
+        <button id="btnGoogleLogout" class="btn ghost hidden">התנתק</button>
+      </div>
     </header>
 
     <main class="mt-6 space-y-4">
@@ -40,58 +45,33 @@
   </div>
 
   <script>
+    // -------- Elements --------
     const chat = document.getElementById('chat');
     const freeText = document.getElementById('freeText');
     const btnPlan = document.getElementById('btnPlan');
     const btnRun = document.getElementById('btnRun');
     const missingFields = document.getElementById('missingFields');
     const googleStatus = document.getElementById('googleStatus');
+    const btnGoogleLogin = document.getElementById('btnGoogleLogin');
+    const btnGoogleLogout = document.getElementById('btnGoogleLogout');
 
+    // -------- State --------
     let lastPlan = null;
     let lastMissing = [];
     let lastText = "";
 
+    // -------- Chat helpers --------
     function addBubble(text, who='bot') {
       const div = document.createElement('div');
       div.className = `bubble ${who}`;
-      div.textContent = text;
+      div.innerHTML = text;
       chat.appendChild(div);
       chat.scrollTop = chat.scrollHeight;
     }
 
-    async function checkGoogle() {
-      try {
-        const r = await fetch('/api/google/me');
-        const j = await r.json();
-        if (j.ok) {
-          googleStatus.innerHTML = `מחובר כ- <b>${j.emailAddress}</b>`;
-        } else {
-          googleStatus.textContent = 'לא מחובר לגוגל';
-          offerLogin();
-        }
-      } catch(e) {
-        googleStatus.textContent = 'לא מחובר לגוגל';
-        offerLogin();
-      }
-    }
-
-    function offerLogin() {
-      const a = document.createElement('a');
-      a.className = 'btn ml-2';
-      a.textContent = 'התחבר לגוגל';
-      a.href = '#';
-      a.onclick = async (e) => {
-        e.preventDefault();
-        const r = await fetch('/api/google/oauth/url');
-        const j = await r.json();
-        if (j.ok && j.url) window.location.href = j.url;
-      };
-      googleStatus.appendChild(a);
-    }
-
     function renderMissing(missing) {
       missingFields.innerHTML = '';
-      missing.forEach(m => {
+      (missing || []).forEach(m => {
         const wrap = document.createElement('div');
         wrap.className = 'space-y-1';
         wrap.innerHTML = `
@@ -102,6 +82,71 @@
       });
     }
 
+    // -------- Google Auth --------
+    function setGoogleUI(status) {
+      // status: { connected:bool, email?:string }
+      if (status.connected) {
+        googleStatus.innerHTML = `מחובר כ-<b>${status.email || ''}</b>`;
+        btnGoogleLogin.classList.add('hidden');
+        btnGoogleLogout.classList.remove('hidden');
+      } else {
+        googleStatus.textContent = 'לא מחובר לגוגל';
+        btnGoogleLogin.classList.remove('hidden');
+        btnGoogleLogout.classList.add('hidden');
+      }
+    }
+
+    async function checkGoogle() {
+      // 1) אם חזרנו מה-OAuth עם #connected=1 — נעדכן UI מיד
+      if (location.hash.includes('connected=1')) {
+        location.hash = ''; // נקה כדי לא לבלבל
+      }
+      // 2) קודם בדוק אם יש refresh_token שמור
+      try {
+        const r1 = await fetch('/api/google/auth/status');
+        if (r1.ok) {
+          const s = await r1.json();
+          if (s?.ok && s.hasRefreshToken) {
+            // יש טוקן שמור — נשלוף אימייל
+            try {
+              const r2 = await fetch('/api/google/me');
+              const j2 = await r2.json();
+              if (j2.ok) return setGoogleUI({ connected: true, email: j2.emailAddress });
+            } catch {}
+            return setGoogleUI({ connected: true });
+          }
+        }
+      } catch {}
+      // 3) fallback ישיר ל-/api/google/me
+      try {
+        const r = await fetch('/api/google/me');
+        const j = await r.json();
+        if (j.ok) setGoogleUI({ connected: true, email: j.emailAddress });
+        else setGoogleUI({ connected: false });
+      } catch {
+        setGoogleUI({ connected: false });
+      }
+    }
+
+    btnGoogleLogin.onclick = async () => {
+      try {
+        const r = await fetch('/api/google/oauth/url');
+        const j = await r.json();
+        if (j.ok && j.url) window.location.href = j.url;
+      } catch {
+        addBubble('שגיאה בקבלת קישור ההתחברות לגוגל.');
+      }
+    };
+
+    btnGoogleLogout.onclick = async () => {
+      try {
+        await fetch('/api/google/logout', { method: 'POST' });
+      } finally {
+        await checkGoogle();
+      }
+    };
+
+    // -------- Plan --------
     btnPlan.onclick = async () => {
       const text = freeText.value.trim();
       if (!text) return;
@@ -136,6 +181,7 @@
       }
     };
 
+    // -------- Run --------
     btnRun.onclick = async () => {
       btnRun.disabled = true;
 
@@ -182,6 +228,7 @@
       }
     };
 
+    // -------- Init --------
     checkGoogle();
   </script>
 </body>
