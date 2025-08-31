@@ -12,20 +12,25 @@
     .bubble{ background:#0b1323; border:1px solid #273244; color:#e5e7eb; border-radius:12px; padding:12px 14px; }
     .bubble.user{ background:#121a2b; }
     .btn {
-      appearance:none; border:none; border-radius:12px; padding:12px 16px;
-      background:linear-gradient(135deg,#6366f1,#8b5cf6); color:#fff;
+      appearance:none; border:none !important; border-radius:12px; padding:12px 16px;
+      background:linear-gradient(135deg,#6366f1,#8b5cf6) !important; color:#fff !important;
       cursor:pointer; font-weight:700; letter-spacing:.3px; box-shadow:0 8px 24px rgba(99,102,241,.35);
     }
     .btn:hover{ filter:brightness(1.03); }
-    .btn-ghost{ background:transparent; border:1px solid #334155; color:#e5e7eb; box-shadow:none; }
+    .btn-ghost{
+      background:transparent !important; border:1.5px solid #6d28d9 !important; color:#6d28d9 !important;
+      border-radius:12px; padding:10px 14px; font-weight:700;
+    }
     .pill{padding:6px 10px;border-radius:999px;font-size:12px;border:1px solid #334155;display:inline-flex;align-items:center;gap:6px;}
     .pill-ok{background:rgba(16,185,129,.12);border-color:rgba(16,185,129,.3); color:#0bb37b;}
     .pill-err{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.35); color:#ef4444;}
     .chat-input { background:#ffffff; color:#111827; border:1px solid #e5e7eb; }
     code { background:#0b1220; padding:2px 6px; border-radius:6px; border:1px solid #1f2937; }
+    /* עזרה מעל השדות */
+    .help { color:#cbd5e1; font-size:13px; }
   </style>
 </head>
-<body class="min-h-screen bg-gray-100 text-gray-100 flex">
+<body class="min-h-screen text-gray-100 flex">
 
   <!-- Sidebar -->
   <aside class="w-64 bg-white text-gray-800 shadow-lg p-6 hidden md:block">
@@ -38,7 +43,7 @@
     </ul>
 
     <div class="mt-8 space-y-2">
-      <button id="btn-debug-nlp" class="w-full btn-ghost rounded-lg py-2">בדיקת NLP</button>
+      <button id="btn-debug-nlp" class="w-full btn-ghost rounded-lg">בדיקת NLP</button>
     </div>
   </aside>
 
@@ -63,10 +68,13 @@
 
       <!-- שורת הקלט -->
       <div class="flex gap-2">
-        <input id="free-text" class="flex-1 chat-input rounded-xl px-3 py-3" placeholder="למשל: מיילים מחודש אחרון ממיכל שלא נענו 10 שעות → הכנס ל-SLA" />
+        <input id="free-text" class="flex-1 chat-input rounded-xl px-3 py-3" placeholder="למשל: מיילים מחודש אחרון ממיכל שלא נענו 10 שעות → שלח וואטסאפ" />
         <button id="btn-plan" class="btn">תכנן</button>
         <button id="btn-run" class="btn" disabled>הרץ</button>
       </div>
+
+      <!-- עזרה מעל השדות החסרים -->
+      <div id="missing-intro" class="help hidden"></div>
 
       <!-- שדות חסרים -->
       <div id="missing-fields" class="grid gap-2 md:grid-cols-2"></div>
@@ -80,6 +88,7 @@
     const btnPlan = document.getElementById('btn-plan');
     const btnRun = document.getElementById('btn-run');
     const missingFields = document.getElementById('missing-fields');
+    const missingIntro = document.getElementById('missing-intro');
 
     const gStatus = document.getElementById('g-status');
     const gEmail  = document.getElementById('g-email');
@@ -90,6 +99,7 @@
     let lastMissing = [];
     let lastText = "";
 
+    // ===== Chat helpers =====
     function addBubble(text, who='bot') {
       const div = document.createElement('div');
       div.className = 'bubble fade-in' + (who==='user' ? ' user' : '');
@@ -97,6 +107,7 @@
       chat.appendChild(div);
       chat.scrollTop = chat.scrollHeight;
     }
+
     function renderMissing(missing) {
       missingFields.innerHTML = '';
       (missing || []).forEach(m => {
@@ -108,8 +119,24 @@
         `;
         missingFields.appendChild(wrap);
       });
+      // עזרה דינמית
+      updateMissingHelp(missing || []);
     }
 
+    function updateMissingHelp(missing) {
+      if (!missing.length) { missingIntro.classList.add('hidden'); missingIntro.textContent = ''; return; }
+      const keys = missing.map(m => m.key);
+      if (keys.includes('to')) {
+        missingIntro.textContent = 'מלאו את מספר ה-WhatsApp בפורמט בינלאומי (למשל 9725xxxxxxxx) ואת כתובת המייל של השולח.';
+      } else if (keys.includes('spreadsheetId')) {
+        missingIntro.textContent = 'יש להדביק קישור לגיליון Google (החלק שבין /d/ ל-/edit) + כתובת המייל של השולח.';
+      } else {
+        missingIntro.textContent = 'מלאו את הפרטים החסרים ולאחר מכן לחצו "הרץ".';
+      }
+      missingIntro.classList.remove('hidden');
+    }
+
+    // ===== Google auth UI =====
     function setGoogleUI(connected, email) {
       if (connected) {
         gStatus.textContent = 'מחובר';
@@ -129,10 +156,8 @@
 
     async function refreshGoogleAccount() {
       let justConnected = false;
-      if (location.hash.includes('connected=1')) {
-        justConnected = true;
-        setGoogleUI(true); // חיווי מיידי
-      }
+      if (location.hash.includes('connected=1')) { justConnected = true; setGoogleUI(true); }
+
       try {
         const r1 = await fetch('/api/google/auth/status');
         if (r1.ok) {
@@ -141,21 +166,20 @@
             try {
               const r2 = await fetch('/api/google/me');
               const j2 = await r2.json();
-              if (j2.ok) setGoogleUI(true, j2.emailAddress);
-              else setGoogleUI(true);
+              if (j2.ok) setGoogleUI(true, j2.emailAddress); else setGoogleUI(true);
             } catch { setGoogleUI(true); }
             if (justConnected) location.hash = '';
             return;
           }
         }
       } catch {}
+
       try {
         const r = await fetch('/api/google/me');
         const j = await r.json();
         setGoogleUI(!!j.ok, j.emailAddress);
-      } catch {
-        if (!justConnected) setGoogleUI(false);
-      }
+      } catch { if (!justConnected) setGoogleUI(false); }
+
       if (justConnected) location.hash = '';
     }
 
@@ -173,6 +197,45 @@
       try { await fetch('/api/google/logout', { method:'POST' }); } finally { refreshGoogleAccount(); }
     };
 
+    // ===== Client-side intent override for WhatsApp =====
+    function applyClientIntentOverride(text, planResult) {
+      const wantWhatsApp = /ווטסאפ|וואטסאפ|whats\s*app|whatsapp/i.test(text || '');
+      if (!wantWhatsApp) return planResult;
+
+      // אם השרת הציע sheets.append – נחליף ל-whatsapp.send
+      const steps = (planResult.proposal || []).slice();
+      const hasWhatsApp = steps.some(s => s.action?.type === 'whatsapp.send');
+      if (!hasWhatsApp) {
+        // הסר פעולת Sheets אם קיימת
+        const filtered = steps.filter(s => !(s.action && s.action.type === 'sheets.append'));
+        filtered.push({
+          action: {
+            type: "whatsapp.send",
+            params: {
+              to: "", // נבקש מהמשתמש אם חסר
+              message: "נמצא מייל שלא נענה: {{item.subject}} — {{item.webLink}}"
+            }
+          }
+        });
+        planResult.proposal = filtered;
+
+        // עדכון missing: החלף spreadsheetId ב-to
+        const missing = (planResult.missing || []).filter(m => m.key !== 'spreadsheetId');
+        if (!missing.find(m => m.key === 'to')) {
+          missing.push({
+            key: "to",
+            label: "מספר WhatsApp כולל קידומת מדינה",
+            example: "9725xxxxxxxx"
+          });
+        }
+        planResult.missing = missing;
+
+        addBubble('זיהיתי בקשה לשליחת הודעה בווטסאפ — אחליף את פעולת Google Sheets בווטסאפ.', 'bot');
+      }
+      return planResult;
+    }
+
+    // ===== Planning =====
     btnPlan.onclick = async () => {
       const text = (freeText.value || '').trim();
       if (!text) return;
@@ -184,8 +247,12 @@
           method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({ text })
         });
-        const j = await res.json();
+        let j = await res.json();
         if (!j.ok) throw new Error(j.error || 'PLAN_FAILED');
+
+        // Override בצד לקוח אם המשתמש ביקש ווטסאפ
+        j = applyClientIntentOverride(text, j);
+
         lastPlan = j.proposal || [];
         lastMissing = j.missing || [];
         lastText = text;
@@ -196,6 +263,7 @@
           btnRun.disabled = false;
         } else {
           addBubble('מעולה — אפשר להריץ.');
+          missingFields.innerHTML = ''; updateMissingHelp([]);
           btnRun.disabled = false;
         }
       } catch (e) {
@@ -206,6 +274,7 @@
       }
     };
 
+    // ===== Execute =====
     btnRun.onclick = async () => {
       btnRun.disabled = true;
 
@@ -240,13 +309,15 @@
           }
           throw new Error(j.error || 'EXECUTION_FAILED');
         }
-        addBubble('✅ בוצע! בדקו את היעד (למשל Google Sheet).');
+        addBubble('✅ בוצע! בדקו את היעד (למשל WhatsApp/Google Sheet).');
+        missingFields.innerHTML = ''; updateMissingHelp([]);
       } catch (e) {
         console.error(e);
         addBubble('❌ שגיאה בהרצה');
       }
     };
 
+    // ===== Debug NLP =====
     document.getElementById('btn-debug-nlp').onclick = async () => {
       const text = (freeText.value || '').trim();
       if (!text) { addBubble('❌ כתוב מטרה חופשית בתיבה למעלה'); return; }
@@ -265,6 +336,7 @@
       }
     };
 
+    // init
     refreshGoogleAccount();
   </script>
 </body>
