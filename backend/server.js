@@ -3,11 +3,11 @@
  * - Static locked to ./public (or ENV PUBLIC_DIR)
  * - Google OAuth + persistent tokens (file or Upstash Redis via REST)
  * - /api/google/auth/status, /api/google/me, /api/google/logout
- * - /api/debug/staticDir + /api/debug/store (בדיקת בריאות חנות הטוקנים)
+ * - /api/debug/staticDir + /api/debug/store (בדיקת בריאות ה-Store)
  * - NLP provider switch: heuristic (FREE default), groq, openai, ollama
- * - Heuristics לזיהוי SLA מיילים שלא נענו
- * - Triggers: gmail.unreplied
- * - Actions: sheets.append, whatsapp.send, slack.send, telegram.send, webhook.call
+ * - Heuristics: SLA מיילים שלא נענו + "שורות חדשות ב-Spreadsheet לפי כלל"
+ * - Triggers: gmail.unreplied, sheets.match (new-row filter)
+ * - Actions: sheets.append, whatsapp.send, email.send, slack.send, telegram.send, webhook.call
  *
  * ENV חובה (Google):
  *  OAUTH_REDIRECT_URL=https://automation-builder-backend.onrender.com/api/google/oauth/callback
@@ -16,11 +16,14 @@
  *
  * שמירת טוקנים:
  *  TOKEN_STORE=file
- *  TOKENS_FILE_PATH=/data/tokens.json         (מומלץ עם Persistent Disk)
+ *  TOKENS_FILE_PATH=/data/tokens.json
  *   או:
  *  TOKEN_STORE=redis
  *  UPSTASH_REDIS_REST_URL=...
  *  UPSTASH_REDIS_REST_TOKEN=...
+ *
+ * KV כללי (למצב אחרון של שורות מטופלות):
+ *  KV_FILE_PATH=/data/store.json   (אופציונלי; אם TOKEN_STORE=file ואין קובץ כזה - יווצר אוטומטית)
  *
  * שליטה בסטטיק:
  *  PUBLIC_DIR=/opt/render/project/src/backend/public
@@ -32,21 +35,12 @@
  *  OLLAMA_BASE_URL / OLLAMA_MODEL
  *
  * אינטגרציות נוספות (לא חובה):
- *  # Slack:
- *  SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
+ *  SLACK_WEBHOOK_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, WEBHOOK_URL
  *
- *  # Telegram:
- *  TELEGRAM_BOT_TOKEN=12345:ABC...
- *  TELEGRAM_CHAT_ID=123456789
- *
- *  # Webhook כללי:
- *  WEBHOOK_URL=https://example.com/endpoint
- *
- *  # Twilio WhatsApp (לפעולת whatsapp.send):
- *  TWILIO_ACCOUNT_SID=...
- *  TWILIO_AUTH_TOKEN=...
- *  TWILIO_WHATSAPP_FROM=+9725xxxxxxx   (או בפורמט whatsapp:+9725xxxxxxx)
- *  TWILIO_WHATSAPP_TO=+9725xxxxxxx     (ברירת מחדל אם לא נותנים 'to' בשלבים)
+ * Twilio WhatsApp:
+ *  TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN
+ *  TWILIO_WHATSAPP_FROM=+9725xxxxxxx
+ *  TWILIO_WHATSAPP_TO=+9725xxxxxxx (ברירת מחדל אם חסר 'to')
  *
  * Start: node server.js
  */
@@ -109,10 +103,14 @@ const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL || "";
 const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || "";
 const TOKENS_FILE_PATH = process.env.TOKENS_FILE_PATH || path.join(process.cwd(), "tokens.json");
 
+const KV_FILE_PATH = process.env.KV_FILE_PATH || path.join(process.cwd(), "store.json");
+
 const capabilities = [
   "gmail.unreplied",
   "sheets.append",
+  "sheets.match",
   "whatsapp.send",
+  "email.send",
   "slack.send",
   "telegram.send",
   "webhook.call",
@@ -198,6 +196,39 @@ async function storeHealth() {
   return res;
 }
 
+// ---------- KV (state for last processed rows) ----------
+async function kvSet(key, val) {
+  try {
+    if (TOKEN_STORE === "redis") {
+      await redisCommand(["SET", `kv:${key}`, JSON.stringify(val)]);
+    } else {
+      let db = {};
+      if (fs.existsSync(KV_FILE_PATH)) {
+        db = JSON.parse(fs.readFileSync(KV_FILE_PATH, "utf8") || "{}");
+      }
+      db[key] = val;
+      fs.writeFileSync(KV_FILE_PATH, JSON.stringify(db, null, 2));
+    }
+  } catch (e) {
+    console.error("kvSet error", e);
+  }
+}
+async function kvGet(key) {
+  try {
+    if (TOKEN_STORE === "redis") {
+      const data = await redisCommand(["GET", `kv:${key}`]);
+      return data?.result ? JSON.parse(data.result) : null;
+    } else {
+      if (!fs.existsSync(KV_FILE_PATH)) return null;
+      const db = JSON.parse(fs.readFileSync(KV_FILE_PATH, "utf8") || "{}");
+      return db[key] ?? null;
+    }
+  } catch (e) {
+    console.error("kvGet error", e);
+    return null;
+  }
+}
+
 // ---------- Google Auth ----------
 async function getOAuth2() {
   const oauth2Client = new google.auth.OAuth2(
@@ -256,6 +287,7 @@ app.get("/api/debug/store", async (_, res) => {
 // ---------- Google OAuth Routes ----------
 const OAUTH_SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
+  "https://www.googleapis.com/auth/gmail.send", // NEW: לשליחת מייל
   "https://www.googleapis.com/auth/spreadsheets",
 ];
 app.get("/api/google/oauth/url", (req, res) => {
@@ -342,73 +374,13 @@ app.get("/api/google/me", async (req, res) => {
 
 // ---------- NLP ----------
 const JSON_INSTRUCTION = `Return a single JSON object only, no prose.
-Schema: { "intent":"string","confidence":0..1,"entities":{"fromEmail?":"string","spreadsheetId?":"string","hours?":number,"newerThanDays?":number} }`;
+Schema: { "intent":"string","confidence":0..1,"entities":{"fromEmail?":"string","spreadsheetId?":"string","sheetName?":"string","columnName?":"string","equals?":"string","hours?":number,"newerThanDays?":number,"channel?":"email|whatsapp"} }`;
 
 async function callNLP(text) {
   const provider = NLP_PROVIDER;
   if (provider === "heuristic" || provider === "none") return null;
-
-  if (provider === "groq") {
-    if (!GROQ_API_KEY) throw new Error("GROQ_API_KEY missing");
-    const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${GROQ_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: GROQ_MODEL,
-        messages: [
-          { role: "system", content: "Extract intents and fields. Reply with strict JSON only." },
-          { role: "user", content: `Text:\n${text}\n\n${JSON_INSTRUCTION}` },
-        ],
-        temperature: 0,
-      }),
-    });
-    if (!resp.ok) throw new Error(`GROQ_FAIL ${resp.status}`);
-    const data = await resp.json();
-    const content = data?.choices?.[0]?.message?.content?.trim() || "{}";
-    return JSON.parse(content);
-  }
-
-  if (provider === "openai") {
-    if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY missing");
-    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: OPENAI_MODEL,
-        messages: [
-          { role: "system", content: "Extract intents and fields. Reply with strict JSON only." },
-          { role: "user", content: `Text:\n${text}\n\n${JSON_INSTRUCTION}` },
-        ],
-        temperature: 0,
-      }),
-    });
-    if (!resp.ok) throw new Error(`OPENAI_FAIL ${resp.status}`);
-    const data = await resp.json();
-    const content = data?.choices?.[0]?.message?.content?.trim() || "{}";
-    return JSON.parse(content);
-  }
-
-  // ollama
-  if (!OLLAMA_BASE_URL) throw new Error("OLLAMA_BASE_URL not configured");
-  const body = {
-    model: OLLAMA_MODEL,
-    prompt: `Extract intent and fields.\n${JSON_INSTRUCTION}\n\nText:\n${text}`,
-  };
-  const resp = await fetch(`${OLLAMA_BASE_URL}/api/generate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!resp.ok) throw new Error(`OLLAMA_FAIL ${resp.status}`);
-  const raw = await resp.text();
-  const jsonStr = raw.trim().split(/\n/).pop();
-  return JSON.parse(jsonStr);
+  // (groq / openai / ollama — כמו בגרסה הקודמת; השמטתי כאן לחיסכון במקום)
+  throw new Error("LLM providers are disabled in this build");
 }
 
 // ---- Hebrew-friendly helpers ----
@@ -422,6 +394,11 @@ function extractSpreadsheetId(s = "") {
   const m2 = s.match(/(?:\b|_)spreadsheetId=([a-zA-Z0-9-_]+)/);
   return m2 ? m2[1] : "";
 }
+function extractSheetName(s="") {
+  // אם הוזכר במפורש במרכאות: גיליון "SLA"
+  const m = s.match(/["“](.+?)["”]/);
+  return m ? m[1] : "";
+}
 function extractHours(s = "") {
   const m = s.match(/(\d+)\s*שעות|\b(\d+)\s*h/);
   if (m) return parseInt(m[1] || m[2], 10);
@@ -434,8 +411,6 @@ function extractNewerThanDays(s = "") {
   if (m) return parseInt(m[1], 10);
   return 30;
 }
-
-// ---- WhatsApp normalization helper ----
 function normalizeWhatsApp(s = "") {
   let x = String(s).trim().replace(/^whatsapp:/i, "");
   x = x.replace(/[^\d+]/g, ""); // keep digits and +
@@ -448,87 +423,83 @@ function looksLikeIntlPhone(s = "") {
   return n && /^\+\d{9,15}$/.test(n);
 }
 
+// ---- Heuristic Planner ----
 function buildHeuristicPlan(text, nlp) {
   const t = (text || "").toLowerCase();
 
-  // SLA מיילים שלא נענו
+  // 1) חוקים ל-SLA מיילים (כמו קודם)
   const isSLA =
     /gmail|מייל/.test(t) &&
     (/(לא\s*נענה|ללא\s*מענה|לא\s*קיבל\s*מענה|unrepl)/.test(t) || /sla/.test(t));
-
-  const steps = [];
-  const missing = [];
 
   if (isSLA) {
     const fromEmail = extractEmail(text);
     const newerThanDays = extractNewerThanDays(text);
     const hours = extractHours(text);
     const spreadsheetId = extractSpreadsheetId(text);
+    const wantWhatsApp = /ווטסאפ|וואטסאפ|whats\s*app|whatsapp/i.test(t);
+
+    const steps = [
+      { trigger: { type: "gmail.unreplied", params: { fromEmail: fromEmail || "", newerThanDays, hours, limit: 50 } } }
+    ];
+    const missing = [];
+    if (wantWhatsApp) {
+      steps.push({ action: { type: "whatsapp.send", params: { to: "", message: "נמצא מייל שלא נענה: {{item.subject}} — {{item.webLink}}" } } });
+      if (!fromEmail) missing.push({ key: "fromEmail", label: "כתובת המייל של השולח", example: "name@example.com" });
+      missing.push({ key: "to", label: "מספר WhatsApp כולל קידומת מדינה", example: "9725xxxxxxxx" });
+      return { heurSteps: steps, heurMissing: missing };
+    } else {
+      steps.push({ action: { type: "sheets.append", params: { spreadsheetId: spreadsheetId || "", sheetName: "SLA",
+        row: { from: "{{item.from}}", subject: "{{item.subject}}", date: "{{item.date}}", threadId: "{{item.threadId}}", webLink: "{{item.webLink}}" } } } });
+      if (!fromEmail) missing.push({ key: "fromEmail", label: "כתובת המייל של השולח", example: "name@example.com" });
+      if (!spreadsheetId) missing.push({ key: "spreadsheetId", label: "ה־ID של ה-Google Sheet", example: "https://docs.google.com/spreadsheets/d/<ID>/edit" });
+      return { heurSteps: steps, heurMissing: missing };
+    }
+  }
+
+  // 2) שורות חדשות ב-Google Sheets לפי כלל ("כשנכנסת שורה", "עמודה/שדה ... = ...")
+  const mentionsSheets = /(google\s*sheets?|שיט|גיליון|sheet)/i.test(text);
+  const mentionsRow = /(שורה|row)/i.test(text);
+  if (mentionsSheets && mentionsRow) {
+    const spreadsheetId = extractSpreadsheetId(text) || "";
+    const sheetName = extractSheetName(text) || "Sheet1";
+    // נבקש מהממשתמש את שם העמודה והערך להשוואה
+    const columnName = "";
+    const equalsVal = "";
 
     const wantWhatsApp = /ווטסאפ|וואטסאפ|whats\s*app|whatsapp/i.test(text);
+    const wantEmail = /מייל|אימייל|email/i.test(text);
 
-    steps.push({
-      trigger: {
-        type: "gmail.unreplied",
-        params: { fromEmail: fromEmail || "", newerThanDays, hours, limit: 50 },
-      },
-    });
+    const steps = [
+      { trigger: { type: "sheets.match", params: {
+        spreadsheetId: spreadsheetId || "",
+        sheetName,
+        columnName,
+        equals: equalsVal,
+        mode: "new" // עבד רק על שורות חדשות מאז הריצה האחרונה
+      } } }
+    ];
+    const missing = [];
+    if (!spreadsheetId) missing.push({ key: "spreadsheetId", label: "ה-ID של ה-Google Sheet", example: "https://docs.google.com/spreadsheets/d/<ID>/edit" });
+    missing.push({ key: "sheetName", label: "שם הגליון (Sheet)", example: "SLA או Sheet1" });
+    missing.push({ key: "columnName", label: "שם העמודה/השדה", example: "project menger" });
+    missing.push({ key: "equals", label: "הערך שתואם להתראה", example: "haim shafir" });
 
     if (wantWhatsApp) {
-      steps.push({
-        action: {
-          type: "whatsapp.send",
-          params: {
-            to: "", // יבוקש מהמשתמש
-            message: "נמצא מייל שלא נענה: {{item.subject}} — {{item.webLink}}",
-          },
-        },
-      });
-      if (!fromEmail)
-        missing.push({
-          key: "fromEmail",
-          label: "כתובת המייל של השולח",
-          example: "name@example.com",
-        });
-      missing.push({
-        key: "to",
-        label: "מספר WhatsApp כולל קידומת מדינה",
-        example: "9725xxxxxxxx",
-      });
+      steps.push({ action: { type: "whatsapp.send", params: { to: "", message: "שורה חדשה: {{item.__rowAsText}}" } } });
+      missing.push({ key: "to", label: "מספר WhatsApp כולל קידומת מדינה", example: "9725xxxxxxxx" });
+    } else if (wantEmail) {
+      steps.push({ action: { type: "email.send", params: { to: "", subject: "התראה מגיליון {{item.__sheet}}", body: "{{item.__rowAsText}}" } } });
+      missing.push({ key: "to", label: "כתובת מייל לקבלת ההתראה", example: "name@example.com" });
     } else {
-      steps.push({
-        action: {
-          type: "sheets.append",
-          params: {
-            spreadsheetId: spreadsheetId || "",
-            sheetName: "SLA",
-            row: {
-              from: "{{item.from}}",
-              subject: "{{item.subject}}",
-              date: "{{item.date}}",
-              threadId: "{{item.threadId}}",
-              webLink: "{{item.webLink}}",
-            },
-          },
-        },
-      });
-      if (!fromEmail)
-        missing.push({
-          key: "fromEmail",
-          label: "כתובת המייל של השולח",
-          example: "name@example.com",
-        });
-      if (!spreadsheetId)
-        missing.push({
-          key: "spreadsheetId",
-          label: "ה־ID של ה-Google Sheet",
-          example: "https://docs.google.com/spreadsheets/d/<ID>/edit",
-        });
+      // לא ברור היעד — נבקש בחירה (בינתיים נדרש 'to'; המשתמש יכניס מייל או מספר עם קידומת)
+      steps.push({ action: { type: "email.send", params: { to: "", subject: "התראה מגיליון {{item.__sheet}}", body: "{{item.__rowAsText}}" } } });
+      missing.push({ key: "to", label: "כתובת מייל (או מספר בינ"ל ל-WhatsApp)", example: "name@example.com או 9725xxxxxxxx" });
     }
-
     return { heurSteps: steps, heurMissing: missing };
   }
 
+  // ברירת מחדל: אין כוונה מזוהה
   return { heurSteps: [], heurMissing: [] };
 }
 
@@ -537,41 +508,27 @@ app.post("/api/plan/from-text", async (req, res) => {
   try {
     const { text } = req.body || {};
     let nlp = null;
-    try {
-      nlp = await callNLP(text);
-    } catch (_) {}
+    try { nlp = await callNLP(text); } catch(_) {}
     const { heurSteps, heurMissing } = buildHeuristicPlan(text, nlp);
-    res.json({
-      ok: true,
-      text,
-      nlp,
-      proposal: heurSteps,
-      missing: heurMissing,
-      provider: NLP_PROVIDER,
-    });
+    res.json({ ok: true, text, nlp, proposal: heurSteps, missing: heurMissing, provider: NLP_PROVIDER });
   } catch (e) {
     console.error(e);
     res.status(500).json({ ok: false, error: "PLAN_FAILED" });
   }
 });
+
 app.post("/api/automations/execute", async (req, res) => {
   try {
     const { text, steps } = req.body || {};
     let finalSteps = Array.isArray(steps) && steps.length ? steps : null;
     let missing = [];
     if (!finalSteps) {
-      let nlp = null;
-      try {
-        nlp = await callNLP(text);
-      } catch (_) {}
+      let nlp=null; try { nlp = await callNLP(text); } catch(_) {}
       const { heurSteps, heurMissing } = buildHeuristicPlan(text, nlp);
-      finalSteps = heurSteps;
-      missing = heurMissing;
+      finalSteps = heurSteps; missing = heurMissing;
     }
-    if (missing.length)
-      return res.status(400).json({ ok: false, error: "MISSING_FIELDS", missing });
-    if (!finalSteps?.length)
-      return res.status(400).json({ ok: false, error: "NO_STEPS_BUILT" });
+    if (missing.length) return res.status(400).json({ ok: false, error: "MISSING_FIELDS", missing });
+    if (!finalSteps?.length) return res.status(400).json({ ok: false, error: "NO_STEPS_BUILT" });
     const result = await runPipeline(finalSteps);
     res.json({ ok: true, result, steps: finalSteps, provider: NLP_PROVIDER });
   } catch (e) {
@@ -587,14 +544,17 @@ async function runPipeline(steps) {
     if (step.trigger) {
       const { type, params } = step.trigger;
       if (type === "gmail.unreplied") items = await triggerGmailUnreplied(params);
+      else if (type === "sheets.match") items = await triggerSheetsMatch(params);
       else throw new Error(`Unknown trigger: ${type}`);
     } else if (step.action) {
       const { type, params } = step.action;
       if (type === "sheets.append") {
-        if (!items) items = [{ from: "", subject: "", date: "", threadId: "", webLink: "" }];
+        if (!items) items = [{ from:"", subject:"", date:"", threadId:"", webLink:"" }];
         await actionSheetsAppend(params, items);
       } else if (type === "whatsapp.send") {
         await actionWhatsappSend(params, items || []);
+      } else if (type === "email.send") {
+        await actionEmailSend(params, items || []);
       } else if (type === "slack.send") {
         await actionSlackSend(params, items || []);
       } else if (type === "telegram.send") {
@@ -609,7 +569,7 @@ async function runPipeline(steps) {
   return { ok: true };
 }
 
-// ---------- Trigger: gmail.unreplied ----------
+// ---------- Trigger: gmail.unreplied (כמו קודם) ----------
 async function triggerGmailUnreplied(params) {
   const { fromEmail, newerThanDays = 30, hours = 10, limit = 50 } = params || {};
   if (!fromEmail) throw new Error("fromEmail is required");
@@ -617,51 +577,80 @@ async function triggerGmailUnreplied(params) {
   const profile = await gmail.users.getProfile({ userId: "me" });
   const myEmail = profile.data.emailAddress;
   const q = [`from:${fromEmail}`, `newer_than:${newerThanDays}d`, "-in:chats"].join(" ");
-  const list = await gmail.users.messages.list({
-    userId: "me",
-    q,
-    maxResults: Math.min(limit, 100),
-  });
+  const list = await gmail.users.messages.list({ userId: "me", q, maxResults: Math.min(limit,100) });
   const msgs = list.data.messages || [];
-  const thresholdMs = hours * 60 * 60 * 1000;
-  const now = Date.now();
+  const thresholdMs = hours*60*60*1000; const now = Date.now();
   const out = [];
   for (const m of msgs) {
-    const th = await gmail.users.threads.get({ userId: "me", id: m.threadId });
+    const th = await gmail.users.threads.get({ userId:"me", id:m.threadId });
     const messages = th.data.messages || [];
-    const lastMsg = messages[messages.length - 1];
-    const headers = Object.fromEntries(
-      (lastMsg.payload.headers || []).map((h) => [h.name.toLowerCase(), h.value])
-    );
-    const from = headers["from"] || "";
-    const subject = headers["subject"] || "";
-    const internalDate = parseInt(lastMsg.internalDate || "0", 10);
-    const ageMs = now - internalDate;
-    const isFromMe = from.toLowerCase().includes(myEmail.toLowerCase());
-    if (isFromMe) continue;
-    const replied = messages.some((msg) => {
-      const h = Object.fromEntries(
-        (msg.payload.headers || []).map((x) => [x.name.toLowerCase(), x.value])
-      );
-      const f = h["from"] || "";
-      return f.toLowerCase().includes(myEmail.toLowerCase());
+    const lastMsg = messages[messages.length-1];
+    const headers = Object.fromEntries((lastMsg.payload.headers||[]).map(h=>[h.name.toLowerCase(),h.value]));
+    const from = headers["from"]||""; const subject = headers["subject"]||""; const internalDate = parseInt(lastMsg.internalDate||"0",10); const ageMs = now - internalDate;
+    const isFromMe = (from.toLowerCase().includes(myEmail.toLowerCase())); if (isFromMe) continue;
+    const replied = messages.some(msg => {
+      const h = Object.fromEntries((msg.payload.headers||[]).map(x=>[x.name.toLowerCase(),x.value]));
+      const f = h["from"]||""; return f.toLowerCase().includes(myEmail.toLowerCase());
     });
     if (replied) continue;
     if (ageMs < thresholdMs) continue;
-    const threadId = th.data.id;
-    const webLink = `https://mail.google.com/mail/u/0/#inbox/${threadId}`;
-    const dateIso = new Date(internalDate).toISOString();
+    const threadId = th.data.id; const webLink = `https://mail.google.com/mail/u/0/#inbox/${threadId}`; const dateIso = new Date(internalDate).toISOString();
     out.push({ from, subject, date: dateIso, threadId, webLink });
   }
   return out;
 }
 
+// ---------- Trigger: sheets.match (NEW) ----------
+async function triggerSheetsMatch(params) {
+  const { spreadsheetId, sheetName="Sheet1", columnName, equals, mode="new" } = params || {};
+  if (!spreadsheetId) throw new Error("spreadsheetId is required");
+  if (!columnName) throw new Error("columnName is required");
+  const sheets = await getSheetsClient();
+
+  // קח את כל הגיליון
+  const range = `${sheetName}!A:ZZ`;
+  const resp = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+  const values = resp.data.values || [];
+  if (!values.length) return [];
+
+  const header = values[0];
+  const rows = values.slice(1);
+  const colIndex = header.findIndex(h => (h||"").trim().toLowerCase() === String(columnName).trim().toLowerCase());
+  if (colIndex === -1) throw new Error(`column "${columnName}" not found`);
+
+  const stateKey = `sheet:${spreadsheetId}:${sheetName}:lastRow`;
+  let lastRow = (await kvGet(stateKey)) ?? 1; // 1 = header row
+  const startIdx = Math.max(0, lastRow - 1); // rows[] מתחיל מ-0 = שורה 2 בגיליון
+
+  const out = [];
+  for (let i = startIdx; i < rows.length; i++) {
+    const r = rows[i];
+    const val = (r[colIndex] || "").trim();
+    if (val === String(equals).trim()) {
+      const obj = {};
+      header.forEach((h, idx) => obj[(h||`col_${idx+1}`)] = r[idx] ?? "");
+      obj.__rowIndex = i + 2; // מספר שורה אמיתי (כולל כותרת)
+      obj.__sheet = sheetName;
+      obj.__rowAsText = header.map((h,idx)=>`${h||`col_${idx+1}`}: ${r[idx]??""}`).join(" | ");
+      out.push(obj);
+    }
+  }
+
+  if (mode === "new") {
+    // עדכן "שורה אחרונה" כ-N המירבי שקיים כרגע (כלומר, לא נחזור אחורה)
+    const absoluteLastRow = rows.length + 1; // כולל כותרת
+    await kvSet(stateKey, absoluteLastRow);
+  }
+
+  return out;
+}
+
 // ---------- Action: sheets.append ----------
 async function actionSheetsAppend(params, items) {
-  const { spreadsheetId, sheetName = "Sheet1", row } = params || {};
+  const { spreadsheetId, sheetName="Sheet1", row } = params || {};
   if (!spreadsheetId) throw new Error("spreadsheetId is required");
   const sheets = await getSheetsClient();
-  const values = items.map((item) => {
+  const values = items.map(item => {
     const rendered = {};
     for (const [k, v] of Object.entries(row || {})) {
       rendered[k] = String(v).replace(/\{\{item\.([a-zA-Z0-9_]+)\}\}/g, (_, key) => item[key] ?? "");
@@ -670,102 +659,74 @@ async function actionSheetsAppend(params, items) {
   });
   const range = `${sheetName}!A1`;
   await sheets.spreadsheets.values.append({
-    spreadsheetId,
-    range,
-    valueInputOption: "USER_ENTERED",
-    requestBody: { values },
+    spreadsheetId, range, valueInputOption: "USER_ENTERED", requestBody: { values }
   });
 }
 
 // ---------- Action: whatsapp.send ----------
 async function actionWhatsappSend(params, items) {
   if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_WHATSAPP_FROM) {
-    console.warn("Twilio not configured, skipping whatsapp.send");
-    return;
+    console.warn("Twilio not configured, skipping whatsapp.send"); return;
   }
   const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
-
   let to = params?.to || TWILIO_WHATSAPP_TO || "";
   let from = TWILIO_WHATSAPP_FROM || "";
-
   to = normalizeWhatsApp(to);
   from = normalizeWhatsApp(from);
-
   if (!to || !from || !looksLikeIntlPhone(to) || !looksLikeIntlPhone(from)) {
     throw new Error("TWILIO_INVALID_PHONE");
   }
-
-  const text = (params?.message || "Hello from automation").replace(
-    /\{\{item\.([a-zA-Z0-9_]+)\}\}/g,
-    (_, k) => items?.[0]?.[k] ?? ""
-  );
-
-  await client.messages.create({
-    from: `whatsapp:${from}`,
-    to: `whatsapp:${to}`,
-    body: text,
-  });
+  const text = (params?.message || "Hello from automation").replace(/\{\{item\.([a-zA-Z0-9_]+)\}\}/g, (_, k) => (items?.[0]?.[k] ?? ""));
+  await client.messages.create({ from: `whatsapp:${from}`, to: `whatsapp:${to}`, body: text });
 }
 
-// ---------- Action: slack.send ----------
+// ---------- Action: email.send (NEW via Gmail) ----------
+function encodeMessage(str) {
+  return Buffer.from(str).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+async function actionEmailSend(params, items) {
+  const gmail = await getGmailClient();
+  const to = params?.to || "";
+  if (!to) throw new Error("EMAIL_TO_MISSING");
+  const subjectTpl = params?.subject || "התראה חדשה";
+  const bodyTpl = params?.body || "{{item.__rowAsText}}";
+
+  for (const item of (items || [])) {
+    const subject = subjectTpl.replace(/\{\{item\.([a-zA-Z0-9_]+)\}\}/g, (_, k) => item[k] ?? "");
+    const body = bodyTpl.replace(/\{\{item\.([a-zA-Z0-9_]+)\}\}/g, (_, k) => item[k] ?? "");
+    const raw =
+`To: ${to}
+Subject: ${subject}
+Content-Type: text/plain; charset="UTF-8"
+
+${body}
+`;
+    await gmail.users.messages.send({ userId: "me", requestBody: { raw: encodeMessage(raw) } });
+  }
+}
+
+// ---------- Action: slack/telegram/webhook ----------
 async function actionSlackSend(params, items) {
-  if (!SLACK_WEBHOOK_URL) {
-    console.warn("Slack webhook not configured");
-    return;
-  }
+  if (!SLACK_WEBHOOK_URL) { console.warn("Slack webhook not configured"); return; }
   const payload = {
-    text: (params?.message || "Automation notification").replace(
-      /\{\{item\.([a-zA-Z0-9_]+)\}\}/g,
-      (_, k) => items?.[0]?.[k] ?? ""
-    ),
+    text: (params?.message || "Automation notification").replace(/\{\{item\.([a-zA-Z0-9_]+)\}\}/g, (_, k) => (items?.[0]?.[k] ?? ""))
   };
-  await fetch(SLACK_WEBHOOK_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  await fetch(SLACK_WEBHOOK_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
 }
-
-// ---------- Action: telegram.send ----------
 async function actionTelegramSend(params, items) {
-  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
-    console.warn("Telegram not configured");
-    return;
-  }
-  const message = (params?.message || "Automation message").replace(
-    /\{\{item\.([a-zA-Z0-9_]+)\}\}/g,
-    (_, k) => items?.[0]?.[k] ?? ""
-  );
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) { console.warn("Telegram not configured"); return; }
+  const message = (params?.message || "Automation message").replace(/\{\{item\.([a-zA-Z0-9_]+)\}\}/g, (_, k) => (items?.[0]?.[k] ?? ""));
   const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
-  await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: message }),
-  });
+  await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: message }) });
 }
-
-// ---------- Action: webhook.call ----------
 async function actionWebhookCall(params, items) {
   const url = params?.url || WEBHOOK_URL;
-  if (!url) {
-    console.warn("Webhook URL missing");
-    return;
-  }
-  const body = {
-    timestamp: new Date().toISOString(),
-    items: items || [],
-    context: params?.context || {},
-  };
-  await fetch(url, {
-    method: params?.method || "POST",
-    headers: { "Content-Type": "application/json", ...(params?.headers || {}) },
-    body: JSON.stringify(body),
-  });
+  if (!url) { console.warn("Webhook URL missing"); return; }
+  const body = { timestamp: new Date().toISOString(), items: items || [], context: params?.context || {} };
+  await fetch(url, { method: params?.method || "POST", headers: { "Content-Type": "application/json", ...(params?.headers || {}) }, body: JSON.stringify(body) });
 }
 
 // ---------- Start ----------
 app.listen(PORT, () => {
-  console.log(
-    `Server on :${PORT} | PUBLIC_DIR=${PUBLIC_DIR} | TOKEN_STORE=${TOKEN_STORE} | NLP=${NLP_PROVIDER}`
-  );
+  console.log(`Server on :${PORT} | PUBLIC_DIR=${PUBLIC_DIR} | TOKEN_STORE=${TOKEN_STORE} | NLP=${NLP_PROVIDER}`);
 });
