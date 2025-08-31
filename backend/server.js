@@ -1,30 +1,25 @@
 /**
  * Automation Builder - Backend (Render-ready)
- * - Robust static serving (finds ./public or ./backend/public)
- * - Google OAuth with PERSISTENT TOKENS (Upstash Redis via REST, or file fallback)
- * - /api/google/auth/status endpoint
- * - Sheets client uses SAME OAuth tokens (async fix)
- * - NLP provider switch (ollama/groq/openai) + heuristic fallback
- * - Never returns an empty pipeline
+ * - Static serving LOCKED to ./public (או לפי ENV PUBLIC_DIR)
+ * - Google OAuth עם שמירת טוקנים (Upstash Redis או קובץ)
+ * - /api/google/auth/status, /api/google/me, /api/google/logout
+ * - Sheets משתמש באותם אישורי OAuth (תיקון async)
+ * - NLP provider switch (ollama/groq/openai) + היריסטיקה
  *
- * ENV (minimal Google):
+ * ENV חובה (Google):
  *  OAUTH_REDIRECT_URL=https://automation-builder-backend.onrender.com/api/google/oauth/callback
  *  GOOGLE_CLIENT_ID=...
  *  GOOGLE_CLIENT_SECRET=...
- *  (optional legacy) GOOGLE_REFRESH_TOKEN=...
  *
- * Token persistence (choose ONE):
+ * שמירת טוקנים (בחר אחד):
  *  TOKEN_STORE=redis
  *    UPSTASH_REDIS_REST_URL=...
  *    UPSTASH_REDIS_REST_TOKEN=...
- *  TOKEN_STORE=file   (default)
- *    TOKENS_FILE_PATH=./tokens.json   (or /data/tokens.json when using Render persistent disk)
+ *  או: TOKEN_STORE=file  (ברירת מחדל)
+ *    TOKENS_FILE_PATH=/data/tokens.json  (מומלץ עם Persistent Disk ב-Render)
  *
- * NLP (optional):
- *  NLP_PROVIDER=groq|openai|ollama   (default: ollama)
- *  GROQ_API_KEY=...      GROQ_MODEL=llama-3.1-8b-instant
- *  OPENAI_API_KEY=...    OPENAI_MODEL=gpt-4o-mini
- *  OLLAMA_BASE_URL=...   OLLAMA_MODEL=llama3.2
+ * שליטה בסטטיק:
+ *  PUBLIC_DIR=/opt/render/project/src/backend/public   (או תשאיר ריק – נשתמש ב-__dirname/public)
  *
  * Start: node server.js
  */
@@ -45,14 +40,14 @@ app.use(express.json({ limit: "2mb" }));
 app.use(morgan("dev"));
 app.use(express.urlencoded({ extended: false }));
 
-// ---------- Robust PUBLIC DIR ----------
-const candidates = [
-  path.join(__dirname, "public"),
-  path.join(__dirname, "backend", "public"),
-  path.join(process.cwd(), "public"),
-  path.join(process.cwd(), "backend", "public"),
-];
-const PUBLIC_DIR = candidates.find(p => fs.existsSync(p)) || candidates[0];
+// ---------- Static: קבע במפורש את תיקיית ה-public ----------
+const PUBLIC_DIR =
+  process.env.PUBLIC_DIR && fs.existsSync(process.env.PUBLIC_DIR)
+    ? process.env.PUBLIC_DIR
+    : path.join(__dirname, "public"); // ברירת מחדל: backend/public
+if (!fs.existsSync(PUBLIC_DIR)) {
+  console.warn("[static] PUBLIC_DIR does not exist:", PUBLIC_DIR);
+}
 console.log("[static] Using PUBLIC_DIR =", PUBLIC_DIR);
 app.use(express.static(PUBLIC_DIR));
 
@@ -157,7 +152,7 @@ async function getOAuth2() {
   return oauth2Client;
 }
 
-// Use SAME credentials for Sheets (async fix)
+// Sheets משתמש באותו OAuth (או Service Account אם מוגדר)
 async function getSheetsClient() {
   if (GOOGLE_APPLICATION_CREDENTIALS && fs.existsSync(GOOGLE_APPLICATION_CREDENTIALS)) {
     const sa = new JWT({

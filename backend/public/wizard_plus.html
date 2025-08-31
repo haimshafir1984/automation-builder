@@ -2,68 +2,99 @@
 <html lang="he" dir="rtl">
 <head>
   <meta charset="utf-8" />
+  <title>Wizard Plus — Chat UI</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Wizard Plus</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    body { background: #0b1020; }
-    .bubble { border-radius: 1rem; padding: 0.75rem 1rem; }
-    .bubble.user { background: #233055; color: #fff; }
-    .bubble.bot { background: #0f172a; color: #e2e8f0; border: 1px solid #334155; }
-    .btn { background: #4f46e5; color: #fff; padding: 0.5rem 0.9rem; border-radius: 0.75rem; }
-    .btn:disabled { opacity: 0.6; cursor: not-allowed; }
-    .btn.ghost { background: transparent; border: 1px solid #334155; color: #e2e8f0; }
-    .field { background: #0f172a; border: 1px solid #334155; color: #e2e8f0; border-radius: 0.75rem; padding: 0.5rem 0.75rem; }
+    body { background:#0b1020; }
+    .fade-in { animation: fadein .4s ease; }
+    @keyframes fadein { from {opacity:0; transform: translateY(6px)} to {opacity:1; transform:none} }
+    .bubble{ background:#0b1323; border:1px solid #273244; color:#e5e7eb; border-radius:12px; padding:12px 14px; }
+    .bubble.user{ background:#121a2b; }
+    .btn {
+      appearance:none; border:none; border-radius:12px; padding:12px 16px;
+      background:linear-gradient(135deg,#6366f1,#8b5cf6); color:#fff;
+      cursor:pointer; font-weight:700; letter-spacing:.3px; box-shadow:0 8px 24px rgba(99,102,241,.35);
+    }
+    .btn:hover{ filter:brightness(1.03); }
+    .btn-ghost{ background:transparent; border:1px solid #334155; color:#e5e7eb; box-shadow:none; }
+    .pill{padding:6px 10px;border-radius:999px;font-size:12px;border:1px solid #334155;display:inline-flex;align-items:center;gap:6px;}
+    .pill-ok{background:rgba(16,185,129,.12);border-color:rgba(16,185,129,.3); color:#0bb37b;}
+    .pill-err{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.35); color:#ef4444;}
+    .chat-input { background:#ffffff; color:#111827; border:1px solid #e5e7eb; }
+    code { background:#0b1220; padding:2px 6px; border-radius:6px; border:1px solid #1f2937; }
   </style>
 </head>
-<body class="min-h-screen text-slate-100">
-  <div class="max-w-3xl mx-auto px-4 py-6">
-    <header class="flex items-center justify-between gap-4">
-      <h1 class="text-2xl font-bold">Wizard Plus</h1>
+<body class="min-h-screen bg-gray-100 text-gray-100 flex">
+
+  <!-- Sidebar -->
+  <aside class="w-64 bg-white text-gray-800 shadow-lg p-6 hidden md:block">
+    <h2 class="text-xl font-bold mb-6">📂 האוטומציות שלי</h2>
+    <ul class="space-y-3">
+      <li class="p-3 bg-blue-100 text-blue-700 rounded-lg font-medium">אוטומציה חדשה</li>
+      <li class="p-3 hover:bg-gray-100 rounded-lg cursor-pointer">SLA מיילים</li>
+      <li class="p-3 hover:bg-gray-100 rounded-lg cursor-pointer">סיכום פגישות</li>
+      <li class="p-3 hover:bg-gray-100 rounded-lg cursor-pointer">הזנות ל-Google Sheets</li>
+    </ul>
+
+    <div class="mt-8 space-y-2">
+      <button id="btn-debug-nlp" class="w-full btn-ghost rounded-lg py-2">בדיקת NLP</button>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <section class="flex-1">
+    <header class="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+      <h1 class="text-xl font-bold">Wizard Plus</h1>
       <div class="flex items-center gap-2">
-        <div id="googleStatus" class="text-sm opacity-80">בודק חיבור לגוגל…</div>
-        <button id="btnGoogleLogin" class="btn hidden">התחבר לגוגל</button>
-        <button id="btnGoogleLogout" class="btn ghost hidden">התנתק</button>
+        <span id="g-status" class="pill pill-err">לא מחובר</span>
+        <span id="g-email" class="pill hidden"></span>
+        <button id="btn-g-connect" class="btn">התחבר לגוגל</button>
+        <button id="btn-g-disconnect" class="btn-ghost hidden">התנתק</button>
       </div>
     </header>
 
-    <main class="mt-6 space-y-4">
+    <main class="p-6 space-y-4">
       <div id="chat" class="space-y-3">
-        <div class="bubble bot">
+        <div class="bubble fade-in">
           כתבו בשפה חופשית מה תרצו שאעשה עבורכם. אני אבקש פרטים שחסרים ואז אריץ אוטומציה.
         </div>
       </div>
 
+      <!-- שורת הקלט -->
       <div class="flex gap-2">
-        <input id="freeText" class="field flex-1" placeholder="לדוגמה: כל מייל מחודש אחרון ממיכל שלא נענה 10 שעות → הכנס ל-SLA" />
-        <button id="btnPlan" class="btn">תכנן</button>
-        <button id="btnRun" class="btn" disabled>הרץ</button>
+        <input id="free-text" class="flex-1 chat-input rounded-xl px-3 py-3" placeholder="למשל: מיילים מחודש אחרון ממיכל שלא נענו 10 שעות → הכנס ל-SLA" />
+        <button id="btn-plan" class="btn">תכנן</button>
+        <button id="btn-run" class="btn" disabled>הרץ</button>
       </div>
 
-      <div id="missingFields" class="grid gap-2 md:grid-cols-2"></div>
+      <!-- שדות חסרים -->
+      <div id="missing-fields" class="grid gap-2 md:grid-cols-2"></div>
     </main>
-  </div>
+  </section>
 
   <script>
-    // -------- Elements --------
+    // ===== Elements =====
     const chat = document.getElementById('chat');
-    const freeText = document.getElementById('freeText');
-    const btnPlan = document.getElementById('btnPlan');
-    const btnRun = document.getElementById('btnRun');
-    const missingFields = document.getElementById('missingFields');
-    const googleStatus = document.getElementById('googleStatus');
-    const btnGoogleLogin = document.getElementById('btnGoogleLogin');
-    const btnGoogleLogout = document.getElementById('btnGoogleLogout');
+    const freeText = document.getElementById('free-text');
+    const btnPlan = document.getElementById('btn-plan');
+    const btnRun = document.getElementById('btn-run');
+    const missingFields = document.getElementById('missing-fields');
 
-    // -------- State --------
+    const gStatus = document.getElementById('g-status');
+    const gEmail  = document.getElementById('g-email');
+    const btnConnect = document.getElementById('btn-g-connect');
+    const btnDisconnect = document.getElementById('btn-g-disconnect');
+
+    // ===== State =====
     let lastPlan = null;
     let lastMissing = [];
     let lastText = "";
 
-    // -------- Chat helpers --------
+    // ===== Chat helpers =====
     function addBubble(text, who='bot') {
       const div = document.createElement('div');
-      div.className = `bubble ${who}`;
+      div.className = 'bubble fade-in' + (who==='user' ? ' user' : '');
       div.innerHTML = text;
       chat.appendChild(div);
       chat.scrollTop = chat.scrollHeight;
@@ -76,112 +107,110 @@
         wrap.className = 'space-y-1';
         wrap.innerHTML = `
           <label class="text-sm opacity-80">${m.label || m.key}</label>
-          <input class="field w-full" data-key="${m.key}" placeholder="${m.example || ''}" />
+          <input class="chat-input w-full rounded-xl px-3 py-2" data-key="${m.key}" placeholder="${m.example || ''}" />
         `;
         missingFields.appendChild(wrap);
       });
     }
 
-    // -------- Google Auth --------
-    function setGoogleUI(status) {
-      // status: { connected:bool, email?:string }
-      if (status.connected) {
-        googleStatus.innerHTML = `מחובר כ-<b>${status.email || ''}</b>`;
-        btnGoogleLogin.classList.add('hidden');
-        btnGoogleLogout.classList.remove('hidden');
+    // ===== Google auth =====
+    function setGoogleUI(connected, email) {
+      if (connected) {
+        gStatus.textContent = 'מחובר';
+        gStatus.classList.remove('pill-err'); gStatus.classList.add('pill-ok');
+        gEmail.textContent = email || '';
+        gEmail.classList.toggle('hidden', !email);
+        btnConnect.classList.add('hidden');
+        btnDisconnect.classList.remove('hidden');
       } else {
-        googleStatus.textContent = 'לא מחובר לגוגל';
-        btnGoogleLogin.classList.remove('hidden');
-        btnGoogleLogout.classList.add('hidden');
+        gStatus.textContent = 'לא מחובר';
+        gStatus.classList.add('pill-err'); gStatus.classList.remove('pill-ok');
+        gEmail.classList.add('hidden'); gEmail.textContent = '';
+        btnConnect.classList.remove('hidden');
+        btnDisconnect.classList.add('hidden');
       }
     }
 
-    async function checkGoogle() {
-      // 1) אם חזרנו מה-OAuth עם #connected=1 — נעדכן UI מיד
-      if (location.hash.includes('connected=1')) {
-        location.hash = ''; // נקה כדי לא לבלבל
-      }
-      // 2) קודם בדוק אם יש refresh_token שמור
+    async function refreshGoogleAccount() {
+      // אם חזרנו מה-OAuth עם hash
+      if (location.hash.includes('connected=1')) location.hash = '';
+
+      // קודם בדוק אם יש refresh_token שמור
       try {
         const r1 = await fetch('/api/google/auth/status');
         if (r1.ok) {
           const s = await r1.json();
           if (s?.ok && s.hasRefreshToken) {
-            // יש טוקן שמור — נשלוף אימייל
             try {
               const r2 = await fetch('/api/google/me');
               const j2 = await r2.json();
-              if (j2.ok) return setGoogleUI({ connected: true, email: j2.emailAddress });
+              setGoogleUI(!!j2.ok, j2.emailAddress);
+              return;
             } catch {}
-            return setGoogleUI({ connected: true });
+            setGoogleUI(true);
+            return;
           }
         }
       } catch {}
-      // 3) fallback ישיר ל-/api/google/me
+      // fallback
       try {
         const r = await fetch('/api/google/me');
         const j = await r.json();
-        if (j.ok) setGoogleUI({ connected: true, email: j.emailAddress });
-        else setGoogleUI({ connected: false });
+        setGoogleUI(!!j.ok, j.emailAddress);
       } catch {
-        setGoogleUI({ connected: false });
+        setGoogleUI(false);
       }
     }
 
-    btnGoogleLogin.onclick = async () => {
+    btnConnect.onclick = async () => {
       try {
         const r = await fetch('/api/google/oauth/url');
         const j = await r.json();
         if (j.ok && j.url) window.location.href = j.url;
+        else addBubble('❌ לא הצלחתי לקבל קישור התחברות');
       } catch {
-        addBubble('שגיאה בקבלת קישור ההתחברות לגוגל.');
+        addBubble('❌ שגיאה בקישור התחברות לגוגל');
       }
     };
-
-    btnGoogleLogout.onclick = async () => {
-      try {
-        await fetch('/api/google/logout', { method: 'POST' });
-      } finally {
-        await checkGoogle();
-      }
+    btnDisconnect.onclick = async () => {
+      try { await fetch('/api/google/logout', { method:'POST' }); } finally { refreshGoogleAccount(); }
     };
 
-    // -------- Plan --------
+    // ===== Planning =====
     btnPlan.onclick = async () => {
-      const text = freeText.value.trim();
+      const text = (freeText.value || '').trim();
       if (!text) return;
       addBubble(text, 'user');
       btnPlan.disabled = true;
 
       try {
-        const r = await fetch('/api/plan/from-text', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+        const res = await fetch('/api/plan/from-text', {
+          method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({ text })
         });
-        const j = await r.json();
+        const j = await res.json();
         if (!j.ok) throw new Error(j.error || 'PLAN_FAILED');
         lastPlan = j.proposal || [];
         lastMissing = j.missing || [];
         lastText = text;
 
         if (lastMissing.length) {
-          addBubble('חסרים כמה פרטים—מילאו אותם כאן ואז לחצו "הרץ".');
+          addBubble('צריך להשלים כמה פרטים—מלאו למטה ואז לחצו "הרץ".');
           renderMissing(lastMissing);
           btnRun.disabled = false;
         } else {
-          addBubble('מוכן להרצה.');
+          addBubble('מעולה — אפשר להריץ.');
           btnRun.disabled = false;
         }
       } catch (e) {
         console.error(e);
-        addBubble('שגיאה בתכנון. נסו שוב או שנו ניסוח.');
+        addBubble('❌ שגיאה בתכנון');
       } finally {
         btnPlan.disabled = false;
       }
     };
 
-    // -------- Run --------
+    // ===== Execute =====
     btnRun.onclick = async () => {
       btnRun.disabled = true;
 
@@ -193,25 +222,20 @@
       const steps = (lastPlan || []).map(s => {
         const copy = JSON.parse(JSON.stringify(s));
         if (copy.trigger?.params) {
-          for (const k of Object.keys(copy.trigger.params)) {
-            if (filled[k]) copy.trigger.params[k] = filled[k];
-          }
+          for (const k of Object.keys(copy.trigger.params)) if (filled[k]) copy.trigger.params[k] = filled[k];
         }
         if (copy.action?.params) {
-          for (const k of Object.keys(copy.action.params)) {
-            if (filled[k]) copy.action.params[k] = filled[k];
-          }
+          for (const k of Object.keys(copy.action.params)) if (filled[k]) copy.action.params[k] = filled[k];
         }
         return copy;
       });
 
       try {
-        const r = await fetch('/api/automations/execute', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+        const res = await fetch('/api/automations/execute', {
+          method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({ text: lastText, steps })
         });
-        const j = await r.json();
+        const j = await res.json();
         if (!j.ok) {
           if (j.error === 'MISSING_FIELDS') {
             renderMissing(j.missing || []);
@@ -221,15 +245,34 @@
           }
           throw new Error(j.error || 'EXECUTION_FAILED');
         }
-        addBubble('בוצע! בדקו את הגיליון/היעד.');
+        addBubble('✅ בוצע! בדקו את היעד (למשל Google Sheet).');
       } catch (e) {
         console.error(e);
-        addBubble('שגיאה בהרצה. נסו שוב.');
+        addBubble('❌ שגיאה בהרצה');
       }
     };
 
-    // -------- Init --------
-    checkGoogle();
+    // ===== Debug button (מציג את פענוח התכנון כמו "NLP") =====
+    document.getElementById('btn-debug-nlp').onclick = async () => {
+      const text = (freeText.value || '').trim();
+      if (!text) { addBubble('❌ כתוב מטרה חופשית בתיבה למעלה'); return; }
+      addBubble('🔎 מריץ /api/plan/from-text…');
+      try {
+        const res = await fetch('/api/plan/from-text', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ text })
+        });
+        const j = await res.json();
+        const pretty = `<pre class="text-xs mt-2"><code>${JSON.stringify(j, null, 2)
+          .replace(/</g,'&lt;').replace(/>/g,'&gt;')}</code></pre>`;
+        addBubble(`Intent: <code>${(j.nlp && j.nlp.intent) || '—'}</code> · Provider: <code>${j.provider || '—'}</code>${pretty}`);
+      } catch {
+        addBubble('❌ שגיאת בדיקת תכנון');
+      }
+    };
+
+    // init
+    refreshGoogleAccount();
   </script>
 </body>
 </html>
