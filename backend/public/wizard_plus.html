@@ -26,7 +26,6 @@
     .pill-err{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.35); color:#ef4444;}
     .chat-input { background:#ffffff; color:#111827; border:1px solid #e5e7eb; }
     code { background:#0b1220; padding:2px 6px; border-radius:6px; border:1px solid #1f2937; }
-    /* עזרה מעל השדות */
     .help { color:#cbd5e1; font-size:13px; }
   </style>
 </head>
@@ -119,8 +118,10 @@
         `;
         missingFields.appendChild(wrap);
       });
-      // עזרה דינמית
       updateMissingHelp(missing || []);
+      // פוקוס לשדה הראשון
+      const first = missingFields.querySelector('input[data-key]');
+      if (first) first.focus();
     }
 
     function updateMissingHelp(missing) {
@@ -129,7 +130,7 @@
       if (keys.includes('to')) {
         missingIntro.textContent = 'מלאו את מספר ה-WhatsApp בפורמט בינלאומי (למשל 9725xxxxxxxx) ואת כתובת המייל של השולח.';
       } else if (keys.includes('spreadsheetId')) {
-        missingIntro.textContent = 'יש להדביק קישור לגיליון Google (החלק שבין /d/ ל-/edit) + כתובת המייל של השולח.';
+        missingIntro.textContent = 'הדביקו קישור לגיליון Google (החלק שבין /d/ ל-/edit) + כתובת המייל של השולח.';
       } else {
         missingIntro.textContent = 'מלאו את הפרטים החסרים ולאחר מכן לחצו "הרץ".';
       }
@@ -197,41 +198,58 @@
       try { await fetch('/api/google/logout', { method:'POST' }); } finally { refreshGoogleAccount(); }
     };
 
+    // ===== Utilities for WhatsApp normalization =====
+    function normalizeWhatsAppInput(s='') {
+      // מסיר "whatsapp:" ורווחים/מקפים, משאיר ספרות ו+ בלבד
+      let x = String(s).trim().replace(/^whatsapp:/i,'');
+      x = x.replace(/[^\d+]/g,'');
+      return x;
+    }
+    function looksLikeIntlPhone(s='') {
+      const n = normalizeWhatsAppInput(s);
+      return /^\+?\d{9,15}$/.test(n);
+    }
+
     // ===== Client-side intent override for WhatsApp =====
     function applyClientIntentOverride(text, planResult) {
       const wantWhatsApp = /ווטסאפ|וואטסאפ|whats\s*app|whatsapp/i.test(text || '');
       if (!wantWhatsApp) return planResult;
 
-      // אם השרת הציע sheets.append – נחליף ל-whatsapp.send
       const steps = (planResult.proposal || []).slice();
-      const hasWhatsApp = steps.some(s => s.action?.type === 'whatsapp.send');
-      if (!hasWhatsApp) {
-        // הסר פעולת Sheets אם קיימת
+      const waIndex = steps.findIndex(s => s.action?.type === 'whatsapp.send');
+
+      // אם אין פעולה – ניצור אחת ונוריד sheets.append אם יש
+      if (waIndex === -1) {
         const filtered = steps.filter(s => !(s.action && s.action.type === 'sheets.append'));
         filtered.push({
-          action: {
-            type: "whatsapp.send",
-            params: {
-              to: "", // נבקש מהמשתמש אם חסר
-              message: "נמצא מייל שלא נענה: {{item.subject}} — {{item.webLink}}"
-            }
-          }
+          action: { type: "whatsapp.send", params: { to: "", message: "נמצא מייל שלא נענה: {{item.subject}} — {{item.webLink}}" } }
         });
         planResult.proposal = filtered;
+      }
 
-        // עדכון missing: החלף spreadsheetId ב-to
-        const missing = (planResult.missing || []).filter(m => m.key !== 'spreadsheetId');
-        if (!missing.find(m => m.key === 'to')) {
-          missing.push({
+      // ודא שדה 'to' קיים ותקין. אם לא – הוסף ל-missing ובטח שהפרמטר ריק כדי שנדרוש מהמשתמש.
+      const wa = (planResult.proposal || []).find(s => s.action?.type === 'whatsapp.send');
+      const currentTo = wa?.action?.params?.to || "";
+      const normalized = normalizeWhatsAppInput(currentTo);
+
+      if (!looksLikeIntlPhone(normalized)) {
+        if (wa) wa.action.params.to = ""; // נכפה ריק כדי שהמשתמש ימלא
+        if (!planResult.missing) planResult.missing = [];
+        if (!planResult.missing.find(m => m.key === 'to')) {
+          planResult.missing.push({
             key: "to",
             label: "מספר WhatsApp כולל קידומת מדינה",
             example: "9725xxxxxxxx"
           });
         }
-        planResult.missing = missing;
-
-        addBubble('זיהיתי בקשה לשליחת הודעה בווטסאפ — אחליף את פעולת Google Sheets בווטסאפ.', 'bot');
+      } else {
+        // אם כבר תקין—נשמור חזרה בפורמט נקי (ללא whatsapp:)
+        if (wa) wa.action.params.to = normalized;
+        // ואם בטעות נשאר "missing" – נסיר
+        planResult.missing = (planResult.missing || []).filter(m => m.key !== 'to');
       }
+
+      addBubble('זיהיתי בקשה לשליחת הודעה בווטסאפ — אחליף/אשתמש בפעולת WhatsApp.', 'bot');
       return planResult;
     }
 
@@ -250,7 +268,7 @@
         let j = await res.json();
         if (!j.ok) throw new Error(j.error || 'PLAN_FAILED');
 
-        // Override בצד לקוח אם המשתמש ביקש ווטסאפ
+        // Override/נרמול לווטסאפ בצד לקוח
         j = applyClientIntentOverride(text, j);
 
         lastPlan = j.proposal || [];
@@ -280,7 +298,10 @@
 
       const filled = {};
       missingFields.querySelectorAll('input[data-key]').forEach(inp => {
-        filled[inp.dataset.key] = inp.value.trim();
+        const k = inp.dataset.key;
+        let v = inp.value.trim();
+        if (k === 'to') v = normalizeWhatsAppInput(v); // נרמול מספר וואטסאפ
+        filled[k] = v;
       });
 
       const steps = (lastPlan || []).map(s => {
@@ -309,7 +330,7 @@
           }
           throw new Error(j.error || 'EXECUTION_FAILED');
         }
-        addBubble('✅ בוצע! בדקו את היעד (למשל WhatsApp/Google Sheet).');
+        addBubble('✅ בוצע! בדקו את היעד (WhatsApp/Google Sheet).');
         missingFields.innerHTML = ''; updateMissingHelp([]);
       } catch (e) {
         console.error(e);
