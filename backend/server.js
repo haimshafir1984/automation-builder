@@ -494,7 +494,8 @@ function buildHeuristicPlan(text, nlp) {
     } else {
       // לא ברור היעד — נבקש בחירה (בינתיים נדרש 'to'; המשתמש יכניס מייל או מספר עם קידומת)
       steps.push({ action: { type: "email.send", params: { to: "", subject: "התראה מגיליון {{item.__sheet}}", body: "{{item.__rowAsText}}" } } });
-      missing.push({ key: "to", label: "כתובת מייל (או מספר בינ"ל ל-WhatsApp)", example: "name@example.com או 9725xxxxxxxx" });
+      missing.push({ key: "to", label: 'כתובת מייל (או מספר בינ"ל ל-WhatsApp)', example: "name@example.com או 9725xxxxxxxx" });
+
     }
     return { heurSteps: steps, heurMissing: missing };
   }
