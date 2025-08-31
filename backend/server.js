@@ -1,32 +1,40 @@
 /**
  * Automation Builder - Backend (Render-ready)
  * - Static locked to ./public (or ENV PUBLIC_DIR)
- * - Google OAuth + persistent tokens (Upstash Redis via REST, or file fallback)
+ * - Google OAuth + persistent tokens (Redis via Upstash or file)
  * - /api/google/auth/status, /api/google/me, /api/google/logout
- * - /api/debug/store for non-secret health of token store
+ * - /api/debug/staticDir + /api/debug/store (בריאות ה-Store)
  * - Sheets uses SAME OAuth creds (async fix)
- * - NLP provider switch (ollama/groq/openai) + heuristic fallback
+ * - NLP provider switch: heuristic (default, FREE), groq, openai, ollama
+ * - Heuristics in HE: מזהה "חודש/שבוע/שעה", אימייל, spreadsheetId מתוך קישור, וכו'
+ * - Extra actions (optional): slack.send, telegram.send, webhook.call
  *
- * ENV (Google):
+ * ENV חובה (Google):
  *  OAUTH_REDIRECT_URL=https://automation-builder-backend.onrender.com/api/google/oauth/callback
  *  GOOGLE_CLIENT_ID=...
  *  GOOGLE_CLIENT_SECRET=...
  *
- * Token store (choose ONE):
- *  TOKEN_STORE=redis
- *    UPSTASH_REDIS_REST_URL=...
- *    UPSTASH_REDIS_REST_TOKEN=...
- *  or: TOKEN_STORE=file   (default)
- *    TOKENS_FILE_PATH=/data/tokens.json     (מומלץ עם Persistent Disk)
+ * שמירת טוקנים:
+ *  TOKEN_STORE=file (עובד לך כבר)  [מומלץ TOKENS_FILE_PATH=/data/tokens.json + Persistent Disk]
+ *   או TOKEN_STORE=redis + UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN
  *
- * Static control (optional):
+ * שליטה בסטטיק:
  *  PUBLIC_DIR=/opt/render/project/src/backend/public
  *
- * Optional:
- *  NLP_PROVIDER=groq|openai|ollama (default: ollama)
- *  GROQ_API_KEY / GROQ_MODEL
- *  OPENAI_API_KEY / OPENAI_MODEL
- *  OLLAMA_BASE_URL / OLLAMA_MODEL
+ * NLP:
+ *  NLP_PROVIDER=heuristic   ← ברירת מחדל (ללא תשלום)
+ *  (אפשר גם groq / openai / ollama אם תרצה בהמשך)
+ *
+ * אינטגרציות נוספות (לא חובה):
+ *  # Slack (Incoming Webhook):
+ *  SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
+ *
+ *  # Telegram:
+ *  TELEGRAM_BOT_TOKEN=12345:ABC...
+ *  TELEGRAM_CHAT_ID=123456789
+ *
+ *  # Webhook כללי:
+ *  WEBHOOK_URL=https://example.com/endpoint
  *
  * Start: node server.js
  */
@@ -66,7 +74,7 @@ const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
 const LEGACY_GOOGLE_REFRESH_TOKEN = process.env.GOOGLE_REFRESH_TOKEN || "";
 const GOOGLE_APPLICATION_CREDENTIALS = process.env.GOOGLE_APPLICATION_CREDENTIALS || "";
 
-const NLP_PROVIDER = (process.env.NLP_PROVIDER || "ollama").toLowerCase();
+const NLP_PROVIDER = (process.env.NLP_PROVIDER || "heuristic").toLowerCase(); // ← DEFAULT: heuristic (FREE)
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "";
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "llama3.2";
 const GROQ_API_KEY = process.env.GROQ_API_KEY || "";
@@ -79,12 +87,17 @@ const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || "";
 const TWILIO_WHATSAPP_FROM = process.env.TWILIO_WHATSAPP_FROM || "";
 const TWILIO_WHATSAPP_TO = process.env.TWILIO_WHATSAPP_TO || "";
 
+const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL || "";
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
+const WEBHOOK_URL = process.env.WEBHOOK_URL || "";
+
 const TOKEN_STORE = (process.env.TOKEN_STORE || "file").toLowerCase();
 const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL || "";
 const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || "";
 const TOKENS_FILE_PATH = process.env.TOKENS_FILE_PATH || path.join(process.cwd(), "tokens.json");
 
-const capabilities = [ "gmail.unreplied", "sheets.append", "whatsapp.send" ];
+const capabilities = [ "gmail.unreplied", "sheets.append", "whatsapp.send", "slack.send", "telegram.send", "webhook.call" ];
 const TOKENS_KEY = "google_oauth_tokens_v1";
 
 // ---------- Token Store ----------
@@ -100,7 +113,6 @@ async function redisCommand(arr) {
   if (!resp.ok) throw new Error(`Upstash ${resp.status}`);
   return await resp.json();
 }
-
 async function saveTokens(tokens) {
   try {
     if (TOKEN_STORE === "redis") {
@@ -145,8 +157,6 @@ async function clearTokens() {
     return false;
   }
 }
-
-// store health (no secrets)
 async function storeHealth() {
   const res = { store: TOKEN_STORE, ok: true };
   const key = `__probe_${Date.now()}`;
@@ -169,7 +179,7 @@ async function storeHealth() {
   return res;
 }
 
-// ---------- Google Auth Helpers ----------
+// ---------- Google Auth ----------
 async function getOAuth2() {
   const oauth2Client = new google.auth.OAuth2(
     GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, OAUTH_REDIRECT_URL
@@ -184,10 +194,7 @@ async function getOAuth2() {
 }
 async function getSheetsClient() {
   if (GOOGLE_APPLICATION_CREDENTIALS && fs.existsSync(GOOGLE_APPLICATION_CREDENTIALS)) {
-    const sa = new JWT({
-      keyFile: GOOGLE_APPLICATION_CREDENTIALS,
-      scopes: ["https://www.googleapis.com/auth/spreadsheets"]
-    });
+    const sa = new JWT({ keyFile: GOOGLE_APPLICATION_CREDENTIALS, scopes: ["https://www.googleapis.com/auth/spreadsheets"] });
     return google.sheets({ version: "v4", auth: sa });
   }
   const oauth2 = await getOAuth2();
@@ -215,7 +222,7 @@ app.get("/api/debug/store", async (_, res) => {
   res.json({ ok: health.ok, store: TOKEN_STORE, error: health.error || null });
 });
 
-// ---------- Google OAuth ----------
+// ---------- Google OAuth Routes ----------
 const OAUTH_SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/spreadsheets"
@@ -251,12 +258,8 @@ app.get("/api/google/oauth/callback", async (req, res) => {
         .status(500)
         .send(`<html dir="rtl"><body style="font-family: sans-serif">
         <h3>נכשל לשמור את טוקני ההתחברות</h3>
-        <p>ייתכן שהגדרות Redis (Upstash) אינן תקינות, או שאין הרשאות כתיבה.</p>
-        <ul>
-          <li>בדקו ב-Render את: <code>TOKEN_STORE=redis</code>, <code>UPSTASH_REDIS_REST_URL</code>, <code>UPSTASH_REDIS_REST_TOKEN</code></li>
-          <li>אפשר לבדוק את ה-store: <a href="/api/debug/store">/api/debug/store</a></li>
-          <li>לניסוי מהיר, נסו זמנית <code>TOKEN_STORE=file</code> (או Disk מתמיד ב-Render).</li>
-        </ul>
+        <p>אם אתם על Redis, בדקו את משתני הסביבה; אחרת עברו זמנית ל-<code>TOKEN_STORE=file</code>.</p>
+        <p><a href="/api/debug/store">/api/debug/store</a></p>
         <p><a href="/wizard_plus.html#connected=0">חזרה ליישום</a></p>
         </body></html>`);
     }
@@ -271,7 +274,7 @@ app.get("/api/google/auth/status", async (req, res) => {
     const tokens = await loadTokens();
     const health = await storeHealth();
     res.json({ ok: true, hasRefreshToken: !!(tokens?.refresh_token || LEGACY_GOOGLE_REFRESH_TOKEN), storeOk: health.ok });
-  } catch (e) {
+  } catch {
     res.json({ ok: true, hasRefreshToken: !!LEGACY_GOOGLE_REFRESH_TOKEN, storeOk: false });
   }
 });
@@ -296,6 +299,9 @@ Schema: { "intent":"string","confidence":0..1,"entities":{"fromEmail?":"string",
 
 async function callNLP(text) {
   const provider = NLP_PROVIDER;
+  if (provider === "heuristic" || provider === "none") {
+    return null; // לא קורא לשום מודל חיצוני
+  }
   if (provider === "groq") {
     if (!GROQ_API_KEY) throw new Error("GROQ_API_KEY missing");
     const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -334,7 +340,7 @@ async function callNLP(text) {
     const content = data?.choices?.[0]?.message?.content?.trim() || "{}";
     return JSON.parse(content);
   }
-  // default: ollama
+  // ollama
   if (!OLLAMA_BASE_URL) throw new Error("OLLAMA_BASE_URL not configured");
   const body = { model: OLLAMA_MODEL, prompt: `Extract intent and fields.\n${JSON_INSTRUCTION}\n\nText:\n${text}` };
   const resp = await fetch(`${OLLAMA_BASE_URL}/api/generate`, {
@@ -346,17 +352,71 @@ async function callNLP(text) {
   return JSON.parse(jsonStr);
 }
 
+// Hebrew-friendly helpers
+function extractEmail(s="") {
+  const m = s.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/);
+  return m ? m[0] : "";
+}
+function extractSpreadsheetId(s="") {
+  // from URL: https://docs.google.com/spreadsheets/d/<ID>/edit...
+  const m = s.match(/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (m) return m[1];
+  // from query param: spreadsheetId=...
+  const m2 = s.match(/(?:\b|_)spreadsheetId=([a-zA-Z0-9-_]+)/);
+  return m2 ? m2[1] : "";
+}
+function extractHours(s="") {
+  const m = s.match(/(\d+)\s*שעות|\b(\d+)\s*h/);
+  if (m) return parseInt(m[1] || m[2],10);
+  return /יום/.test(s) ? 24 : 10; // ברירת מחדל
+}
+function extractNewerThanDays(s="") {
+  if (/חודש/.test(s)) return 30;
+  if (/שבוע/.test(s)) return 7;
+  const m = s.match(/(\d+)\s*י?ימים?/);
+  if (m) return parseInt(m[1],10);
+  return 30;
+}
+
 function buildHeuristicPlan(text, nlp) {
   const t = (text || "").toLowerCase();
-  const isSLA = /unreply|לא.*נענ[ה]|sla|לא קיבל מענה|ללא מענה|לא נענה/.test(t) || /gmail/.test(t);
-  const steps = [], missing = [];
+
+  // ---- Intent detection ----
+  // SLA מיילים שלא נענו
+  const isSLA =
+    /gmail|מייל/.test(t) &&
+    (/(לא\s*נענה|ללא\s*מענה|לא\s*קיבל\s*מענה|unrepl)/.test(t) || /sla/.test(t));
+
+  const steps = [];
+  const missing = [];
+
   if (isSLA) {
-    steps.push({ trigger: { type: "gmail.unreplied", params: { fromEmail: "", newerThanDays: 30, hours: 10, limit: 50 } } });
-    steps.push({ action: { type: "sheets.append", params: { spreadsheetId: "", sheetName: "SLA", row: { from: "{{item.from}}", subject: "{{item.subject}}", date: "{{item.date}}", threadId: "{{item.threadId}}", webLink: "{{item.webLink}}" } } } });
-    missing.push({ key: "fromEmail", label: "כתובת המייל של השולח", example: "name@example.com" });
-    missing.push({ key: "spreadsheetId", label: "ה־ID של ה-Google Sheet", example: "1AbCd...xyz" });
+    // try to pull values from text itself
+    const fromEmail = extractEmail(text);
+    const newerThanDays = extractNewerThanDays(text);
+    const hours = extractHours(text);
+    const spreadsheetId = extractSpreadsheetId(text);
+
+    steps.push({
+      trigger: { type: "gmail.unreplied", params: {
+        fromEmail: fromEmail || "", newerThanDays, hours, limit: 50
+      } }
+    });
+    steps.push({
+      action: { type: "sheets.append", params: {
+        spreadsheetId: spreadsheetId || "", sheetName: "SLA",
+        row: { from: "{{item.from}}", subject: "{{item.subject}}", date: "{{item.date}}", threadId: "{{item.threadId}}", webLink: "{{item.webLink}}" }
+      } }
+    });
+
+    if (!fromEmail) missing.push({ key: "fromEmail", label: "כתובת המייל של השולח", example: "name@example.com" });
+    if (!spreadsheetId) missing.push({ key: "spreadsheetId", label: "ה־ID של ה-Google Sheet", example: "https://docs.google.com/spreadsheets/d/<ID>/edit" });
+
+    return { heurSteps: steps, heurMissing: missing };
   }
-  return { heurSteps: steps, heurMissing: missing };
+
+  // Default: no recognized intent → ask user
+  return { heurSteps: [], heurMissing: [] };
 }
 
 // ---------- Plan & Execute ----------
@@ -406,7 +466,15 @@ async function runPipeline(steps) {
         await actionSheetsAppend(params, items);
       } else if (type === "whatsapp.send") {
         await actionWhatsappSend(params, items || []);
-      } else throw new Error(`Unknown action: ${type}`);
+      } else if (type === "slack.send") {
+        await actionSlackSend(params, items || []);
+      } else if (type === "telegram.send") {
+        await actionTelegramSend(params, items || []);
+      } else if (type === "webhook.call") {
+        await actionWebhookCall(params, items || []);
+      } else {
+        throw new Error(`Unknown action: ${type}`);
+      }
     }
   }
   return { ok: true };
@@ -461,7 +529,7 @@ async function actionSheetsAppend(params, items) {
   });
 }
 
-// ---------- Action: whatsapp.send ----------
+// ---------- Action: whatsapp.send (Twilio) ----------
 async function actionWhatsappSend(params, items) {
   if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_WHATSAPP_FROM) {
     console.warn("Twilio not configured, skipping whatsapp.send");
@@ -474,6 +542,47 @@ async function actionWhatsappSend(params, items) {
     from: `whatsapp:${TWILIO_WHATSAPP_FROM}`,
     to: `whatsapp:${to}`,
     body: text
+  });
+}
+
+// ---------- Action: slack.send ----------
+async function actionSlackSend(params, items) {
+  if (!SLACK_WEBHOOK_URL) { console.warn("Slack webhook not configured"); return; }
+  const payload = {
+    text: (params?.message || "Automation notification").replace(/\{\{item\.([a-zA-Z0-9_]+)\}\}/g, (_, k) => (items?.[0]?.[k] ?? ""))
+  };
+  await fetch(SLACK_WEBHOOK_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+}
+
+// ---------- Action: telegram.send ----------
+async function actionTelegramSend(params, items) {
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) { console.warn("Telegram not configured"); return; }
+  const message = (params?.message || "Automation message").replace(/\{\{item\.([a-zA-Z0-9_]+)\}\}/g, (_, k) => (items?.[0]?.[k] ?? ""));
+  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+  await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: message })
+  });
+}
+
+// ---------- Action: webhook.call ----------
+async function actionWebhookCall(params, items) {
+  const url = params?.url || WEBHOOK_URL;
+  if (!url) { console.warn("Webhook URL missing"); return; }
+  const body = {
+    timestamp: new Date().toISOString(),
+    items: items || [],
+    context: params?.context || {}
+  };
+  await fetch(url, {
+    method: params?.method || "POST",
+    headers: { "Content-Type": "application/json", ...(params?.headers || {}) },
+    body: JSON.stringify(body)
   });
 }
 

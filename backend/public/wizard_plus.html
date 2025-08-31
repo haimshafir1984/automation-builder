@@ -86,12 +86,10 @@
     const btnConnect = document.getElementById('btn-g-connect');
     const btnDisconnect = document.getElementById('btn-g-disconnect');
 
-    // ===== State =====
     let lastPlan = null;
     let lastMissing = [];
     let lastText = "";
 
-    // ===== Chat helpers =====
     function addBubble(text, who='bot') {
       const div = document.createElement('div');
       div.className = 'bubble fade-in' + (who==='user' ? ' user' : '');
@@ -99,7 +97,6 @@
       chat.appendChild(div);
       chat.scrollTop = chat.scrollHeight;
     }
-
     function renderMissing(missing) {
       missingFields.innerHTML = '';
       (missing || []).forEach(m => {
@@ -113,7 +110,6 @@
       });
     }
 
-    // ===== Google auth UI =====
     function setGoogleUI(connected, email) {
       if (connected) {
         gStatus.textContent = 'מחובר';
@@ -132,14 +128,11 @@
     }
 
     async function refreshGoogleAccount() {
-      // אם חזרנו עכשיו מה-OAuth – תן חיווי מיידי כדי שהמשתמש יראה "מחובר"
       let justConnected = false;
       if (location.hash.includes('connected=1')) {
         justConnected = true;
-        setGoogleUI(true);
+        setGoogleUI(true); // חיווי מיידי
       }
-
-      // 1) בדיקה מהירה: האם נשמר refresh_token
       try {
         const r1 = await fetch('/api/google/auth/status');
         if (r1.ok) {
@@ -156,8 +149,6 @@
           }
         }
       } catch {}
-
-      // 2) fallback ישיר
       try {
         const r = await fetch('/api/google/me');
         const j = await r.json();
@@ -165,7 +156,6 @@
       } catch {
         if (!justConnected) setGoogleUI(false);
       }
-
       if (justConnected) location.hash = '';
     }
 
@@ -183,7 +173,6 @@
       try { await fetch('/api/google/logout', { method:'POST' }); } finally { refreshGoogleAccount(); }
     };
 
-    // ===== Planning =====
     btnPlan.onclick = async () => {
       const text = (freeText.value || '').trim();
       if (!text) return;
@@ -217,7 +206,6 @@
       }
     };
 
-    // ===== Execute =====
     btnRun.onclick = async () => {
       btnRun.disabled = true;
 
@@ -259,7 +247,6 @@
       }
     };
 
-    // ===== Debug NLP =====
     document.getElementById('btn-debug-nlp').onclick = async () => {
       const text = (freeText.value || '').trim();
       if (!text) { addBubble('❌ כתוב מטרה חופשית בתיבה למעלה'); return; }
@@ -278,7 +265,6 @@
       }
     };
 
-    // init
     refreshGoogleAccount();
   </script>
 </body>
