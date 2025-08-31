@@ -113,7 +113,7 @@
       });
     }
 
-    // ===== Google auth =====
+    // ===== Google auth UI =====
     function setGoogleUI(connected, email) {
       if (connected) {
         gStatus.textContent = 'מחובר';
@@ -132,10 +132,14 @@
     }
 
     async function refreshGoogleAccount() {
-      // אם חזרנו מה-OAuth עם hash
-      if (location.hash.includes('connected=1')) location.hash = '';
+      // אם חזרנו עכשיו מה-OAuth – תן חיווי מיידי כדי שהמשתמש יראה "מחובר"
+      let justConnected = false;
+      if (location.hash.includes('connected=1')) {
+        justConnected = true;
+        setGoogleUI(true);
+      }
 
-      // קודם בדוק אם יש refresh_token שמור
+      // 1) בדיקה מהירה: האם נשמר refresh_token
       try {
         const r1 = await fetch('/api/google/auth/status');
         if (r1.ok) {
@@ -144,22 +148,25 @@
             try {
               const r2 = await fetch('/api/google/me');
               const j2 = await r2.json();
-              setGoogleUI(!!j2.ok, j2.emailAddress);
-              return;
-            } catch {}
-            setGoogleUI(true);
+              if (j2.ok) setGoogleUI(true, j2.emailAddress);
+              else setGoogleUI(true);
+            } catch { setGoogleUI(true); }
+            if (justConnected) location.hash = '';
             return;
           }
         }
       } catch {}
-      // fallback
+
+      // 2) fallback ישיר
       try {
         const r = await fetch('/api/google/me');
         const j = await r.json();
         setGoogleUI(!!j.ok, j.emailAddress);
       } catch {
-        setGoogleUI(false);
+        if (!justConnected) setGoogleUI(false);
       }
+
+      if (justConnected) location.hash = '';
     }
 
     btnConnect.onclick = async () => {
@@ -252,7 +259,7 @@
       }
     };
 
-    // ===== Debug button (מציג את פענוח התכנון כמו "NLP") =====
+    // ===== Debug NLP =====
     document.getElementById('btn-debug-nlp').onclick = async () => {
       const text = (freeText.value || '').trim();
       if (!text) { addBubble('❌ כתוב מטרה חופשית בתיבה למעלה'); return; }

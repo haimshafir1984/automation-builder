@@ -1,25 +1,32 @@
 /**
  * Automation Builder - Backend (Render-ready)
- * - Static serving LOCKED to ./public (או לפי ENV PUBLIC_DIR)
- * - Google OAuth עם שמירת טוקנים (Upstash Redis או קובץ)
+ * - Static locked to ./public (or ENV PUBLIC_DIR)
+ * - Google OAuth + persistent tokens (Upstash Redis via REST, or file fallback)
  * - /api/google/auth/status, /api/google/me, /api/google/logout
- * - Sheets משתמש באותם אישורי OAuth (תיקון async)
- * - NLP provider switch (ollama/groq/openai) + היריסטיקה
+ * - /api/debug/store for non-secret health of token store
+ * - Sheets uses SAME OAuth creds (async fix)
+ * - NLP provider switch (ollama/groq/openai) + heuristic fallback
  *
- * ENV חובה (Google):
+ * ENV (Google):
  *  OAUTH_REDIRECT_URL=https://automation-builder-backend.onrender.com/api/google/oauth/callback
  *  GOOGLE_CLIENT_ID=...
  *  GOOGLE_CLIENT_SECRET=...
  *
- * שמירת טוקנים (בחר אחד):
+ * Token store (choose ONE):
  *  TOKEN_STORE=redis
  *    UPSTASH_REDIS_REST_URL=...
  *    UPSTASH_REDIS_REST_TOKEN=...
- *  או: TOKEN_STORE=file  (ברירת מחדל)
- *    TOKENS_FILE_PATH=/data/tokens.json  (מומלץ עם Persistent Disk ב-Render)
+ *  or: TOKEN_STORE=file   (default)
+ *    TOKENS_FILE_PATH=/data/tokens.json     (מומלץ עם Persistent Disk)
  *
- * שליטה בסטטיק:
- *  PUBLIC_DIR=/opt/render/project/src/backend/public   (או תשאיר ריק – נשתמש ב-__dirname/public)
+ * Static control (optional):
+ *  PUBLIC_DIR=/opt/render/project/src/backend/public
+ *
+ * Optional:
+ *  NLP_PROVIDER=groq|openai|ollama (default: ollama)
+ *  GROQ_API_KEY / GROQ_MODEL
+ *  OPENAI_API_KEY / OPENAI_MODEL
+ *  OLLAMA_BASE_URL / OLLAMA_MODEL
  *
  * Start: node server.js
  */
@@ -40,11 +47,11 @@ app.use(express.json({ limit: "2mb" }));
 app.use(morgan("dev"));
 app.use(express.urlencoded({ extended: false }));
 
-// ---------- Static: קבע במפורש את תיקיית ה-public ----------
+// ---------- Static ----------
 const PUBLIC_DIR =
   process.env.PUBLIC_DIR && fs.existsSync(process.env.PUBLIC_DIR)
     ? process.env.PUBLIC_DIR
-    : path.join(__dirname, "public"); // ברירת מחדל: backend/public
+    : path.join(__dirname, "public"); // default: backend/public
 if (!fs.existsSync(PUBLIC_DIR)) {
   console.warn("[static] PUBLIC_DIR does not exist:", PUBLIC_DIR);
 }
@@ -80,7 +87,7 @@ const TOKENS_FILE_PATH = process.env.TOKENS_FILE_PATH || path.join(process.cwd()
 const capabilities = [ "gmail.unreplied", "sheets.append", "whatsapp.send" ];
 const TOKENS_KEY = "google_oauth_tokens_v1";
 
-// ---------- Token Store (Redis/File) ----------
+// ---------- Token Store ----------
 async function redisCommand(arr) {
   const url = UPSTASH_URL;
   const token = UPSTASH_TOKEN;
@@ -93,6 +100,7 @@ async function redisCommand(arr) {
   if (!resp.ok) throw new Error(`Upstash ${resp.status}`);
   return await resp.json();
 }
+
 async function saveTokens(tokens) {
   try {
     if (TOKEN_STORE === "redis") {
@@ -138,7 +146,30 @@ async function clearTokens() {
   }
 }
 
-// ---------- GOOGLE AUTH HELPERS ----------
+// store health (no secrets)
+async function storeHealth() {
+  const res = { store: TOKEN_STORE, ok: true };
+  const key = `__probe_${Date.now()}`;
+  try {
+    if (TOKEN_STORE === "redis") {
+      await redisCommand(["SET", key, "1"]);
+      const got = await redisCommand(["GET", key]);
+      await redisCommand(["DEL", key]);
+      if (!got?.result) throw new Error("redis get failed");
+    } else {
+      fs.writeFileSync(TOKENS_FILE_PATH + ".probe", "1");
+      const ok = fs.existsSync(TOKENS_FILE_PATH + ".probe");
+      if (!ok) throw new Error("file write failed");
+      fs.unlinkSync(TOKENS_FILE_PATH + ".probe");
+    }
+  } catch (e) {
+    res.ok = false;
+    res.error = e.message || String(e);
+  }
+  return res;
+}
+
+// ---------- Google Auth Helpers ----------
 async function getOAuth2() {
   const oauth2Client = new google.auth.OAuth2(
     GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, OAUTH_REDIRECT_URL
@@ -151,8 +182,6 @@ async function getOAuth2() {
   }
   return oauth2Client;
 }
-
-// Sheets משתמש באותו OAuth (או Service Account אם מוגדר)
 async function getSheetsClient() {
   if (GOOGLE_APPLICATION_CREDENTIALS && fs.existsSync(GOOGLE_APPLICATION_CREDENTIALS)) {
     const sa = new JWT({
@@ -168,7 +197,7 @@ async function getGmailClient() {
   return google.gmail({ version: "v1", auth: await getOAuth2() });
 }
 
-// ---------- BASIC & STATIC ROUTES ----------
+// ---------- Basic & Static Routes ----------
 app.get("/", (_, res) => res.redirect("/wizard_plus.html"));
 app.get(["/wizard_plus.html","/wizard_plus"], (req, res) => {
   const filePath = path.join(PUBLIC_DIR, "wizard_plus.html");
@@ -177,9 +206,16 @@ app.get(["/wizard_plus.html","/wizard_plus"], (req, res) => {
 });
 app.get("/api/health", (_, res) => res.json({ ok: true, time: new Date().toISOString() }));
 app.get("/api/registry", (_, res) => res.json({ ok: true, capabilities }));
-app.get("/api/debug/staticDir", (_, res) => res.json({ ok: true, PUBLIC_DIR, TOKEN_STORE }));
+app.get("/api/debug/staticDir", async (_, res) => {
+  const health = await storeHealth();
+  res.json({ ok: true, PUBLIC_DIR, TOKEN_STORE, storeOk: health.ok, storeError: health.error || null });
+});
+app.get("/api/debug/store", async (_, res) => {
+  const health = await storeHealth();
+  res.json({ ok: health.ok, store: TOKEN_STORE, error: health.error || null });
+});
 
-// ---------- GOOGLE OAUTH ----------
+// ---------- Google OAuth ----------
 const OAUTH_SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/spreadsheets"
@@ -209,7 +245,21 @@ app.get("/api/google/oauth/callback", async (req, res) => {
       ...tokens,
       refresh_token: tokens.refresh_token || existing?.refresh_token || LEGACY_GOOGLE_REFRESH_TOKEN || ""
     };
-    await saveTokens(merged);
+    const saved = await saveTokens(merged);
+    if (!saved) {
+      return res
+        .status(500)
+        .send(`<html dir="rtl"><body style="font-family: sans-serif">
+        <h3>נכשל לשמור את טוקני ההתחברות</h3>
+        <p>ייתכן שהגדרות Redis (Upstash) אינן תקינות, או שאין הרשאות כתיבה.</p>
+        <ul>
+          <li>בדקו ב-Render את: <code>TOKEN_STORE=redis</code>, <code>UPSTASH_REDIS_REST_URL</code>, <code>UPSTASH_REDIS_REST_TOKEN</code></li>
+          <li>אפשר לבדוק את ה-store: <a href="/api/debug/store">/api/debug/store</a></li>
+          <li>לניסוי מהיר, נסו זמנית <code>TOKEN_STORE=file</code> (או Disk מתמיד ב-Render).</li>
+        </ul>
+        <p><a href="/wizard_plus.html#connected=0">חזרה ליישום</a></p>
+        </body></html>`);
+    }
     res.redirect("/wizard_plus.html#connected=1");
   } catch (e) {
     console.error(e);
@@ -219,9 +269,10 @@ app.get("/api/google/oauth/callback", async (req, res) => {
 app.get("/api/google/auth/status", async (req, res) => {
   try {
     const tokens = await loadTokens();
-    res.json({ ok: true, hasRefreshToken: !!(tokens?.refresh_token || LEGACY_GOOGLE_REFRESH_TOKEN) });
+    const health = await storeHealth();
+    res.json({ ok: true, hasRefreshToken: !!(tokens?.refresh_token || LEGACY_GOOGLE_REFRESH_TOKEN), storeOk: health.ok });
   } catch (e) {
-    res.json({ ok: true, hasRefreshToken: !!LEGACY_GOOGLE_REFRESH_TOKEN });
+    res.json({ ok: true, hasRefreshToken: !!LEGACY_GOOGLE_REFRESH_TOKEN, storeOk: false });
   }
 });
 app.post("/api/google/logout", async (req, res) => {
@@ -239,7 +290,7 @@ app.get("/api/google/me", async (req, res) => {
   }
 });
 
-// ---------- NLP (provider switch) ----------
+// ---------- NLP ----------
 const JSON_INSTRUCTION = `Return a single JSON object only, no prose.
 Schema: { "intent":"string","confidence":0..1,"entities":{"fromEmail?":"string","spreadsheetId?":"string","hours?":number,"newerThanDays?":number} }`;
 
@@ -283,7 +334,7 @@ async function callNLP(text) {
     const content = data?.choices?.[0]?.message?.content?.trim() || "{}";
     return JSON.parse(content);
   }
-  // default ollama
+  // default: ollama
   if (!OLLAMA_BASE_URL) throw new Error("OLLAMA_BASE_URL not configured");
   const body = { model: OLLAMA_MODEL, prompt: `Extract intent and fields.\n${JSON_INSTRUCTION}\n\nText:\n${text}` };
   const resp = await fetch(`${OLLAMA_BASE_URL}/api/generate`, {
@@ -308,7 +359,7 @@ function buildHeuristicPlan(text, nlp) {
   return { heurSteps: steps, heurMissing: missing };
 }
 
-// ---------- PLAN & EXECUTE ----------
+// ---------- Plan & Execute ----------
 app.post("/api/plan/from-text", async (req, res) => {
   try {
     const { text } = req.body || {};
@@ -340,7 +391,7 @@ app.post("/api/automations/execute", async (req, res) => {
   }
 });
 
-// ---------- PIPELINE RUNTIME ----------
+// ---------- Pipeline Runtime ----------
 async function runPipeline(steps) {
   let items = null;
   for (const step of steps) {
@@ -361,7 +412,7 @@ async function runPipeline(steps) {
   return { ok: true };
 }
 
-// ---------- TRIGGER: gmail.unreplied ----------
+// ---------- Trigger: gmail.unreplied ----------
 async function triggerGmailUnreplied(params) {
   const { fromEmail, newerThanDays=30, hours=10, limit=50 } = params || {};
   if (!fromEmail) throw new Error("fromEmail is required");
@@ -392,7 +443,7 @@ async function triggerGmailUnreplied(params) {
   return out;
 }
 
-// ---------- ACTION: sheets.append ----------
+// ---------- Action: sheets.append ----------
 async function actionSheetsAppend(params, items) {
   const { spreadsheetId, sheetName="Sheet1", row } = params || {};
   if (!spreadsheetId) throw new Error("spreadsheetId is required");
@@ -410,7 +461,7 @@ async function actionSheetsAppend(params, items) {
   });
 }
 
-// ---------- ACTION: whatsapp.send (Twilio) ----------
+// ---------- Action: whatsapp.send ----------
 async function actionWhatsappSend(params, items) {
   if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_WHATSAPP_FROM) {
     console.warn("Twilio not configured, skipping whatsapp.send");
@@ -426,7 +477,7 @@ async function actionWhatsappSend(params, items) {
   });
 }
 
-// ---------- START ----------
+// ---------- Start ----------
 app.listen(PORT, () => {
   console.log(`Server on :${PORT} | PUBLIC_DIR=${PUBLIC_DIR} | TOKEN_STORE=${TOKEN_STORE} | NLP=${NLP_PROVIDER}`);
 });
