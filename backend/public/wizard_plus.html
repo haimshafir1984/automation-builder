@@ -67,7 +67,7 @@
 
       <!-- שורת הקלט -->
       <div class="flex gap-2">
-        <input id="free-text" class="flex-1 chat-input rounded-xl px-3 py-3" placeholder="למשל: מיילים מחודש אחרון ממיכל שלא נענו 10 שעות → שלח וואטסאפ" />
+        <input id="free-text" class="flex-1 chat-input rounded-xl px-3 py-3" placeholder="למשל: כל פעם שנכנסת שורה בלשונית project בעמודה project menger עם הערך haim shafir — שלח לי למייל" />
         <button id="btn-plan" class="btn">תכנן</button>
         <button id="btn-run" class="btn" disabled>הרץ</button>
       </div>
@@ -119,7 +119,6 @@
         missingFields.appendChild(wrap);
       });
       updateMissingHelp(missing || []);
-      // פוקוס לשדה הראשון
       const first = missingFields.querySelector('input[data-key]');
       if (first) first.focus();
     }
@@ -128,11 +127,11 @@
       if (!missing.length) { missingIntro.classList.add('hidden'); missingIntro.textContent = ''; return; }
       const keys = missing.map(m => m.key);
       if (keys.includes('to')) {
-        missingIntro.textContent = 'מלאו את מספר ה-WhatsApp בפורמט בינלאומי (למשל 9725xxxxxxxx) ואת כתובת המייל של השולח.';
+        missingIntro.textContent = 'מלאו את כתובת המייל, או מספר WhatsApp בפורמט בינלאומי (9725xxxxxxxx).';
       } else if (keys.includes('spreadsheetId')) {
-        missingIntro.textContent = 'הדביקו קישור לגיליון Google (החלק שבין /d/ ל-/edit) + כתובת המייל של השולח.';
+        missingIntro.textContent = 'אפשר להדביק את כל קישור הגיליון — אנחנו נוציא את ה-ID לבד.';
       } else {
-        missingIntro.textContent = 'מלאו את הפרטים החסרים ולאחר מכן לחצו "הרץ".';
+        missingIntro.textContent = 'מלאו את הפרטים החסרים ולחצו "הרץ".';
       }
       missingIntro.classList.remove('hidden');
     }
@@ -157,21 +156,19 @@
 
     async function refreshGoogleAccount() {
       let justConnected = false;
-      if (location.hash.includes('connected=1')) { justConnected = true; setGoogleUI(true); }
+      if (location.hash.includes('connected=1')) justConnected = true;
 
       try {
         const r1 = await fetch('/api/google/auth/status');
-        if (r1.ok) {
-          const s = await r1.json();
-          if (s?.ok && s.hasRefreshToken) {
-            try {
-              const r2 = await fetch('/api/google/me');
-              const j2 = await r2.json();
-              if (j2.ok) setGoogleUI(true, j2.emailAddress); else setGoogleUI(true);
-            } catch { setGoogleUI(true); }
-            if (justConnected) location.hash = '';
-            return;
-          }
+        const s = r1.ok ? await r1.json() : null;
+        if (s?.ok && s.hasRefreshToken) {
+          try {
+            const r2 = await fetch('/api/google/me');
+            const j2 = await r2.json();
+            if (j2.ok) setGoogleUI(true, j2.emailAddress); else setGoogleUI(true);
+          } catch { setGoogleUI(true); }
+          if (justConnected) location.hash = '';
+          return;
         }
       } catch {}
 
@@ -198,59 +195,15 @@
       try { await fetch('/api/google/logout', { method:'POST' }); } finally { refreshGoogleAccount(); }
     };
 
-    // ===== Utilities for WhatsApp normalization =====
+    // ===== WhatsApp normalization =====
     function normalizeWhatsAppInput(s='') {
-      // מסיר "whatsapp:" ורווחים/מקפים, משאיר ספרות ו+ בלבד
       let x = String(s).trim().replace(/^whatsapp:/i,'');
       x = x.replace(/[^\d+]/g,'');
-      return x;
+      return x.startsWith('+') ? x : ('+' + x);
     }
     function looksLikeIntlPhone(s='') {
       const n = normalizeWhatsAppInput(s);
-      return /^\+?\d{9,15}$/.test(n);
-    }
-
-    // ===== Client-side intent override for WhatsApp =====
-    function applyClientIntentOverride(text, planResult) {
-      const wantWhatsApp = /ווטסאפ|וואטסאפ|whats\s*app|whatsapp/i.test(text || '');
-      if (!wantWhatsApp) return planResult;
-
-      const steps = (planResult.proposal || []).slice();
-      const waIndex = steps.findIndex(s => s.action?.type === 'whatsapp.send');
-
-      // אם אין פעולה – ניצור אחת ונוריד sheets.append אם יש
-      if (waIndex === -1) {
-        const filtered = steps.filter(s => !(s.action && s.action.type === 'sheets.append'));
-        filtered.push({
-          action: { type: "whatsapp.send", params: { to: "", message: "נמצא מייל שלא נענה: {{item.subject}} — {{item.webLink}}" } }
-        });
-        planResult.proposal = filtered;
-      }
-
-      // ודא שדה 'to' קיים ותקין. אם לא – הוסף ל-missing ובטח שהפרמטר ריק כדי שנדרוש מהמשתמש.
-      const wa = (planResult.proposal || []).find(s => s.action?.type === 'whatsapp.send');
-      const currentTo = wa?.action?.params?.to || "";
-      const normalized = normalizeWhatsAppInput(currentTo);
-
-      if (!looksLikeIntlPhone(normalized)) {
-        if (wa) wa.action.params.to = ""; // נכפה ריק כדי שהמשתמש ימלא
-        if (!planResult.missing) planResult.missing = [];
-        if (!planResult.missing.find(m => m.key === 'to')) {
-          planResult.missing.push({
-            key: "to",
-            label: "מספר WhatsApp כולל קידומת מדינה",
-            example: "9725xxxxxxxx"
-          });
-        }
-      } else {
-        // אם כבר תקין—נשמור חזרה בפורמט נקי (ללא whatsapp:)
-        if (wa) wa.action.params.to = normalized;
-        // ואם בטעות נשאר "missing" – נסיר
-        planResult.missing = (planResult.missing || []).filter(m => m.key !== 'to');
-      }
-
-      addBubble('זיהיתי בקשה לשליחת הודעה בווטסאפ — אחליף/אשתמש בפעולת WhatsApp.', 'bot');
-      return planResult;
+      return /^\+\d{9,15}$/.test(n);
     }
 
     // ===== Planning =====
@@ -265,15 +218,16 @@
           method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({ text })
         });
-        let j = await res.json();
+        const j = await res.json();
         if (!j.ok) throw new Error(j.error || 'PLAN_FAILED');
-
-        // Override/נרמול לווטסאפ בצד לקוח
-        j = applyClientIntentOverride(text, j);
 
         lastPlan = j.proposal || [];
         lastMissing = j.missing || [];
         lastText = text;
+
+        if (Array.isArray(j.questions) && j.questions.length) {
+          j.questions.forEach(q => addBubble('❓ ' + q));
+        }
 
         if (lastMissing.length) {
           addBubble('צריך להשלים כמה פרטים—מלאו למטה ואז לחצו "הרץ".');
@@ -300,7 +254,7 @@
       missingFields.querySelectorAll('input[data-key]').forEach(inp => {
         const k = inp.dataset.key;
         let v = inp.value.trim();
-        if (k === 'to') v = normalizeWhatsAppInput(v); // נרמול מספר וואטסאפ
+        if (k === 'to' && /^\+?\d/.test(v)) v = normalizeWhatsAppInput(v);
         filled[k] = v;
       });
 
@@ -330,7 +284,7 @@
           }
           throw new Error(j.error || 'EXECUTION_FAILED');
         }
-        addBubble('✅ בוצע! בדקו את היעד (WhatsApp/Google Sheet).');
+        addBubble('✅ בוצע! בדקו את היעד (Email / WhatsApp / Sheet).');
         missingFields.innerHTML = ''; updateMissingHelp([]);
       } catch (e) {
         console.error(e);
