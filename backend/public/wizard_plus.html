@@ -27,23 +27,51 @@
     .chat-input { background:#ffffff; color:#111827; border:1px solid #e5e7eb; }
     code { background:#0b1220; padding:2px 6px; border-radius:6px; border:1px solid #1f2937; }
     .help { color:#cbd5e1; font-size:13px; }
+    .menu-item { padding:10px 12px; border-radius:10px; cursor:pointer; border:1px solid #e5e7eb; background:#fff; color:#334155; }
+    .menu-item:hover { background:#f5f5ff; border-color:#c7d2fe; }
+    .menu-title { font-weight:700; margin-bottom:4px; }
+    .menu-desc { font-size:12px; opacity:.75; }
   </style>
 </head>
 <body class="min-h-screen text-gray-100 flex">
 
-  <aside class="w-64 bg-white text-gray-800 shadow-lg p-6 hidden md:block">
-    <h2 class="text-xl font-bold mb-6">📂 האוטומציות שלי</h2>
-    <ul class="space-y-3">
-      <li class="p-3 bg-blue-100 text-blue-700 rounded-lg font-medium">אוטומציה חדשה</li>
-      <li class="p-3 hover:bg-gray-100 rounded-lg cursor-pointer">SLA מיילים</li>
-      <li class="p-3 hover:bg-gray-100 rounded-lg cursor-pointer">סיכום פגישות</li>
-      <li class="p-3 hover:bg-gray-100 rounded-lg cursor-pointer">הזנות ל-Google Sheets</li>
-    </ul>
-    <div class="mt-8 space-y-2">
+  <!-- Sidebar -->
+  <aside class="w-72 bg-white text-gray-800 shadow-lg p-6 space-y-6 hidden md:block">
+    <div>
+      <h2 class="text-xl font-bold mb-3">🚀 אוטומציות מוצעות</h2>
+      <div class="space-y-2">
+        <div class="menu-item" data-template="two-senders-to-sheet">
+          <div class="menu-title">טבלה משותפת לשני שולחים</div>
+          <div class="menu-desc">כשהם שולחים מייל → הוספת שורה (שולח, תאריך, נושא, תוכן)</div>
+        </div>
+        <div class="menu-item" data-template="unreplied-to-sheet">
+          <div class="menu-title">מיילים לא נענו → גיליון</div>
+          <div class="menu-desc">זיהוי חוטים שלא נענו X שעות → רשומה ב־Google Sheet</div>
+        </div>
+        <div class="menu-item" data-template="sheet-match-to-email">
+          <div class="menu-title">ערך בעמודה → מייל</div>
+          <div class="menu-desc">כשהתווסף ערך מסוים בעמודה ספציפית → שליחת אימייל</div>
+        </div>
+        <div class="menu-item" data-template="unreplied-to-whatsapp">
+          <div class="menu-title">מיילים לא נענו → WhatsApp</div>
+          <div class="menu-desc">SLA: הודעת וואטסאפ עם קישור לשיחה</div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <h2 class="text-xl font-bold mb-3">📂 האוטומציות שלי</h2>
+      <div id="my-autos" class="space-y-2 text-sm">
+        <div class="opacity-60">— אין עדיין שמורות —</div>
+      </div>
+    </div>
+
+    <div class="space-y-2">
       <button id="btn-debug-nlp" class="w-full btn-ghost rounded-lg">בדיקת NLP</button>
     </div>
   </aside>
 
+  <!-- Main -->
   <section class="flex-1">
     <header class="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
       <h1 class="text-xl font-bold">Wizard Plus</h1>
@@ -67,6 +95,7 @@
                placeholder="למשל: טבלה משותפת לשני אנשים; כל פעם שאחד מהם שולח מייל—להוסיף שורה עם השולח/נושא/תאריך/תוכן" />
         <button id="btn-plan" class="btn">תכנן</button>
         <button id="btn-run" class="btn" disabled>הרץ</button>
+        <button id="btn-save" class="btn-ghost" disabled>שמור כאוטומציה</button>
       </div>
 
       <div id="missing-intro" class="help hidden"></div>
@@ -75,10 +104,12 @@
   </section>
 
   <script>
+    // ===== Elements =====
     const chat = document.getElementById('chat');
     const freeText = document.getElementById('free-text');
     const btnPlan = document.getElementById('btn-plan');
     const btnRun = document.getElementById('btn-run');
+    const btnSave = document.getElementById('btn-save');
     const missingFields = document.getElementById('missing-fields');
     const missingIntro = document.getElementById('missing-intro');
 
@@ -87,10 +118,14 @@
     const btnConnect = document.getElementById('btn-g-connect');
     const btnDisconnect = document.getElementById('btn-g-disconnect');
 
+    const myAutos = document.getElementById('my-autos');
+
     let lastPlan = null;
     let lastMissing = [];
     let lastText = "";
+    let draftSteps = null; // steps after filling missing
 
+    // ===== Chat helpers =====
     function addBubble(text, who='bot') {
       const div = document.createElement('div');
       div.className = 'bubble fade-in' + (who==='user' ? ' user' : '');
@@ -114,6 +149,7 @@
       const first = missingFields.querySelector('input[data-key]');
       if (first) first.focus();
     }
+
     function updateMissingHelp(missing) {
       if (!missing.length) { missingIntro.classList.add('hidden'); missingIntro.textContent = ''; return; }
       const keys = missing.map(m => m.key);
@@ -123,12 +159,15 @@
         missingIntro.textContent = 'אפשר להדביק את כל קישור הגיליון — נוציא את ה-ID לבד.';
       } else if (keys.includes('fromEmails')) {
         missingIntro.textContent = 'הזינו כמה כתובות מייל מופרדות בפסיק: name1@ex.com, name2@ex.com';
+      } else if (keys.includes('fromEmail')) {
+        missingIntro.textContent = 'כתובת המייל של השולח שאותו בודקים.';
       } else {
         missingIntro.textContent = 'מלאו את הפרטים החסרים ולחצו "הרץ".';
       }
       missingIntro.classList.remove('hidden');
     }
 
+    // ===== Google auth UI =====
     function setGoogleUI(connected, email) {
       if (connected) {
         gStatus.textContent = 'מחובר';
@@ -148,6 +187,7 @@
     async function refreshGoogleAccount() {
       let justConnected = false;
       if (location.hash.includes('connected=1')) justConnected = true;
+
       try {
         const r1 = await fetch('/api/google/auth/status');
         const s = r1.ok ? await r1.json() : null;
@@ -161,29 +201,53 @@
           return;
         }
       } catch {}
+
       try {
         const r = await fetch('/api/google/me');
         const j = await r.json();
         setGoogleUI(!!j.ok, j.emailAddress);
       } catch { setGoogleUI(false); }
+
       if (justConnected) location.hash = '';
     }
-
     btnConnect.onclick = async () => {
       try {
         const r = await fetch('/api/google/oauth/url');
         const j = await r.json();
         if (j.ok && j.url) window.location.href = j.url;
         else addBubble('❌ לא הצלחתי לקבל קישור התחברות');
-      } catch { addBubble('❌ שגיאה בקישור התחברות לגוגל'); }
+      } catch {
+        addBubble('❌ שגיאה בקישור התחברות לגוגל');
+      }
     };
     btnDisconnect.onclick = async () => {
       try { await fetch('/api/google/logout', { method:'POST' }); } finally { refreshGoogleAccount(); }
     };
 
-    btnPlan.onclick = async () => {
-      const text = (freeText.value || '').trim();
-      if (!text) return;
+    // ===== Suggested templates (sidebar) =====
+    const templateTexts = {
+      "two-senders-to-sheet":
+        "אני רוצה לבנות טבלה משותפת לשני אנשים; כל פעם שאחד מהם שולח מייל—להוסיף שורה עם השולח, התאריך, הנושא, והתוכן.",
+      "unreplied-to-sheet":
+        "כל מייל מלקוח מסוים שלא נענה במשך 10 שעות ב-30 ימים האחרונים—להוסיף רשומה בגיליון Google.",
+      "sheet-match-to-email":
+        "כשהתווסף ערך מסוים בעמודה מסוימת בגיליון—שלח אימייל עם כל השורה.",
+      "unreplied-to-whatsapp":
+        "מיילים שלא נענו במשך 10 שעות ב-30 ימים האחרונים—שלח הודעת WhatsApp עם נושא וקישור לשיחה."
+    };
+
+    document.querySelectorAll('.menu-item[data-template]').forEach(el => {
+      el.addEventListener('click', async () => {
+        const key = el.getAttribute('data-template');
+        const text = templateTexts[key] || '';
+        if (!text) return;
+        freeText.value = text;
+        await doPlan(text);
+      });
+    });
+
+    // ===== NLP Planning =====
+    async function doPlan(text) {
       addBubble(text, 'user');
       btnPlan.disabled = true;
       try {
@@ -206,27 +270,40 @@
           addBubble('צריך להשלים כמה פרטים—מלאו למטה ואז לחצו "הרץ".');
           renderMissing(lastMissing);
           btnRun.disabled = false;
+          btnSave.disabled = true; // נשמור אחרי מילוי
         } else if (lastPlan.length) {
           addBubble('מעולה — אפשר להריץ.');
           missingFields.innerHTML = ''; updateMissingHelp([]);
           btnRun.disabled = false;
+          btnSave.disabled = false;
         } else {
-          addBubble('לא זוהתה כוונה. נסו לנסח אחרת או להוסיף עוד פרטים.');
+          addBubble('לא זוהתה כוונה. נסו לנסח אחרת או לבחור אוטומציה מוצעת.');
         }
       } catch (e) {
         console.error(e);
         addBubble('❌ שגיאה בתכנון');
-      } finally { btnPlan.disabled = false; }
+      } finally {
+        btnPlan.disabled = false;
+      }
+    }
+
+    btnPlan.onclick = async () => {
+      const text = (freeText.value || '').trim();
+      if (!text) return;
+      await doPlan(text);
     };
 
+    // ===== Execute =====
     btnRun.onclick = async () => {
       btnRun.disabled = true;
+
       const filled = {};
       missingFields.querySelectorAll('input[data-key]').forEach(inp => {
         const k = inp.dataset.key;
         let v = inp.value.trim();
         filled[k] = v;
       });
+
       const steps = (lastPlan || []).map(s => {
         const copy = JSON.parse(JSON.stringify(s));
         if (copy.trigger?.params) {
@@ -237,6 +314,7 @@
         }
         return copy;
       });
+      draftSteps = steps;
 
       try {
         const res = await fetch('/api/automations/execute', {
@@ -255,12 +333,98 @@
         }
         addBubble('✅ בוצע! בדקו את היעד (Email / WhatsApp / Sheet).');
         missingFields.innerHTML = ''; updateMissingHelp([]);
+        btnSave.disabled = false; // עכשיו אפשר לשמור כאוטומציה
       } catch (e) {
         console.error(e);
         addBubble('❌ שגיאה בהרצה');
       }
     };
 
+    // ===== Save automation (per user) =====
+    function slugify(s='') {
+      return s.toLowerCase().trim()
+        .replace(/[^\w\s\u0590-\u05FF-]/g,'')
+        .replace(/\s+/g,'-').slice(0,50) || ('auto-' + Math.random().toString(36).slice(2,8));
+    }
+
+    btnSave.onclick = async () => {
+      if (!draftSteps && (!lastPlan || !lastPlan.length)) {
+        addBubble('אין מה לשמור כרגע. הרץ או תכנן קודם.');
+        return;
+      }
+      const title = prompt('שם לאוטומציה:', 'אוטומציה חדשה');
+      if (!title) return;
+      const id = slugify(title);
+
+      const steps = draftSteps?.length ? draftSteps : lastPlan;
+
+      try {
+        const res = await fetch('/api/automations/save', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ id, title, text: lastText, steps })
+        });
+        const j = await res.json();
+        if (j.ok) {
+          addBubble(`💾 נשמר בשם <code>${title}</code>.`);
+          loadMyAutos();
+        } else {
+          addBubble('❌ שגיאה בשמירה');
+        }
+      } catch {
+        addBubble('❌ שגיאה בשמירה');
+      }
+    };
+
+    async function loadMyAutos() {
+      myAutos.innerHTML = '<div class="opacity-60">טוען…</div>';
+      try {
+        const r = await fetch('/api/automations/list');
+        const j = await r.json();
+        if (!j.ok) throw new Error();
+        if (!j.items.length) {
+          myAutos.innerHTML = '<div class="opacity-60">— אין עדיין שמורות —</div>';
+          return;
+        }
+        myAutos.innerHTML = '';
+        j.items.sort((a,b)=>b.updatedAt-a.updatedAt).forEach(a => {
+          const row = document.createElement('div');
+          row.className = 'menu-item';
+          row.innerHTML = `
+            <div class="menu-title">${a.title || a.id}</div>
+            <div class="menu-desc">${(a.text||'').slice(0,90)}</div>
+            <div class="mt-2 flex gap-2">
+              <button class="btn-ghost px-3 py-2" data-run="${a.id}">הרץ</button>
+              <button class="btn-ghost px-3 py-2" data-delete="${a.id}">מחק</button>
+            </div>
+          `;
+          myAutos.appendChild(row);
+
+          row.querySelector(`[data-run="${a.id}"]`).onclick = async () => {
+            try {
+              const res = await fetch('/api/automations/execute-saved', {
+                method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({ id: a.id })
+              });
+              const j = await res.json();
+              if (j.ok) addBubble(`▶️ הופעלה: <code>${a.title || a.id}</code>`);
+              else addBubble('❌ שגיאה בהרצה');
+            } catch { addBubble('❌ שגיאה בהרצה'); }
+          };
+          row.querySelector(`[data-delete="${a.id}"]`).onclick = async () => {
+            if (!confirm('למחוק את האוטומציה?')) return;
+            try {
+              const res = await fetch('/api/automations/' + a.id, { method:'DELETE' });
+              const j2 = await res.json();
+              if (j2.ok) { loadMyAutos(); addBubble('🗑️ נמחק'); } else addBubble('❌ שגיאה במחיקה');
+            } catch { addBubble('❌ שגיאה במחיקה'); }
+          };
+        });
+      } catch {
+        myAutos.innerHTML = '<div class="text-red-600">❌ שגיאה בטעינה</div>';
+      }
+    }
+
+    // ===== Debug NLP =====
     document.getElementById('btn-debug-nlp').onclick = async () => {
       const text = (freeText.value || '').trim();
       if (!text) { addBubble('❌ כתוב מטרה חופשית בתיבה למעלה'); return; }
@@ -277,7 +441,8 @@
       } catch { addBubble('❌ שגיאת בדיקת תכנון'); }
     };
 
-    refreshGoogleAccount();
+    // init
+    refreshGoogleAccount().then(loadMyAutos);
   </script>
 </body>
 </html>
