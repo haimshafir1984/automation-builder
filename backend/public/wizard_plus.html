@@ -1,416 +1,311 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="he" dir="rtl">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Automation Builder – Wizard+</title>
+  <title>Wizard Plus — Chat UI</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    :root {
-      --bg: #f7f7fb;
-      --card: #ffffff;
-      --text: #222;
-      --muted: #6b7280;
-      --primary: #1a73e8;   /* Google-blue */
-      --accent: #10b981;    /* green */
-      --danger: #ef4444;    /* red */
-      --border: #e5e7eb;
+    .fade-in { animation: fadein .4s ease; }
+    @keyframes fadein { from {opacity:0; transform: translateY(6px)} to {opacity:1; transform:none} }
+    .bubble{ background:#0b1323; border:1px solid #273244; color:#e5e7eb; }
+    .bubble.user{ background:#121a2b; }
+    .btn {
+      appearance:none; border:none; border-radius:12px; padding:12px 16px;
+      background:linear-gradient(135deg,#6366f1,#8b5cf6); color:#fff;
+      box-shadow: 0 10px 18px rgba(0,0,0,0.15), inset 0 -3px 0 rgba(0,0,0,.15);
+      cursor:pointer; font-weight:700;
     }
-    html, body { margin:0; padding:0; background:var(--bg); color:var(--text); font-family: system-ui, -apple-system, "Segoe UI", Arial, "Noto Sans", "Helvetica Neue", "Apple Color Emoji", "Segoe UI Emoji"; }
-    .container { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
-    .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 10px 18px rgba(0,0,0,0.04); }
-    .row { display:flex; gap:16px; align-items:stretch; }
-    .col { flex:1 1 0%; }
-    .col-40 { flex: 0 0 40%; }
-    .col-60 { flex: 0 0 60%; }
-    .p-16 { padding:16px; }
-    .p-20 { padding:20px; }
-    .mb-8 { margin-bottom:8px; }
-    .mb-12 { margin-bottom:12px; }
-    .mb-16 { margin-bottom:16px; }
-    .mb-20 { margin-bottom:20px; }
-    .mb-24 { margin-bottom:24px; }
-    .mt-8 { margin-top:8px; }
-    .mt-12 { margin-top:12px; }
-    .mt-16 { margin-top:16px; }
-    .muted { color: var(--muted); }
-    .badge { display:inline-block; font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid var(--border); background:#fff; color:#374151; }
-    .statusbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
-    .btn { cursor:pointer; display:inline-flex; align-items:center; justify-content:center; padding:10px 14px; border-radius:10px; font-weight:600; border:1px solid var(--border); background:#fff; color:#111; }
-    .btn:hover { filter: brightness(0.97); }
-    .btn-primary { background: var(--primary); color:#fff; border-color: transparent; }
-    .btn-primary:hover { filter: brightness(0.95); }
-    .btn-outline { background:#fff; color:#111; border:1px solid var(--border); }
-    .btn-danger { background: var(--danger); color:#fff; border-color: transparent; }
-    .input, textarea { width:100%; padding:12px 14px; border:1px solid var(--border); border-radius:10px; font-size:15px; background:#fff; color:#111; }
-    textarea { min-height:110px; line-height:1.6; resize:vertical; }
-    .label { font-size:13px; color:#374151; margin-bottom:6px; display:block; }
-    .grid { display:grid; gap:12px; }
-    .grid-2 { grid-template-columns: 1fr 1fr; }
-    .grid-1 { grid-template-columns: 1fr; }
-    .flex { display:flex; }
-    .items-center { align-items:center; }
-    .justify-between { justify-content:space-between; }
-    .divider { height:1px; background:var(--border); margin:16px 0; }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
-    .kbd { border:1px solid var(--border); border-bottom-width:3px; padding:0 6px; border-radius:6px; background:#fff; font-size:12px; }
-    .toast { position:fixed; inset-inline-start: 16px; bottom:16px; background:#111; color:#fff; padding:12px 14px; border-radius:10px; opacity:0.96; }
-    .help { font-size:12px; color:#6b7280; margin-top:6px; }
-    .pill { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:999px; background:#f3f4f6; border:1px solid var(--border); font-size:12px; color:#374151; }
-    .hint { font-size:12px; color:#4b5563; }
-    .codeblock { background:#0b1220; color:#c7d2fe; padding:12px; border-radius:8px; font-size:12px; overflow:auto; direction:ltr; text-align:left; }
-    .ok { color: var(--accent); font-weight:700; }
-    .err { color: var(--danger); font-weight:700; }
-    .section-title { font-size:14px; font-weight:700; color:#111; margin-bottom:8px; }
-    .shadow-inset { box-shadow: inset 0 0 0 1px var(--border); border-radius:10px; }
-    .small { font-size:12px; }
+    .btn:hover{ filter:brightness(0.97) }
+    .btn-ghost{ background:transparent; color:#374151; border:1px solid #e5e7eb }
+    .pill{ display:inline-flex; gap:8px; align-items:center; padding:6px 10px; border-radius:999px; font-weight:600; font-size:12px; border:1px solid #37415133 }
+    .pill-ok{background:rgba(16,185,129,.12);border-color:rgba(16,185,129,.3); color:#0bb37b;}
+    .pill-err{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.35); color:#ef4444;}
+    /* תשובות/אינפוטים בבועות – רקע לבן וטקסט כהה כדי שלא "ייעלם" */
+    .chat-input { background:#ffffff; color:#111827; border:1px solid #e5e7eb; }
+    code { background:#0b1220; padding:2px 6px; border-radius:6px; border:1px solid #1f2937; }
   </style>
 </head>
-<body>
-  <div class="container">
-    <!-- סטטוס עליון -->
-    <div class="statusbar card p-16">
-      <div id="status-provider" class="badge">Provider: —</div>
-      <div id="status-model" class="badge">Model: —</div>
-      <div id="status-google" class="badge">Google: בודק…</div>
-      <div class="badge">Capabilities: Gmail · Sheets · Email · WhatsApp · Slack · Telegram · Webhook</div>
-      <div style="margin-inline-start:auto;">
-        <button id="btnGoogle" class="btn btn-primary">התחברות ל-Google</button>
-        <button id="btnLogout" class="btn btn-outline">התנתק</button>
-      </div>
+<body class="min-h-screen bg-gray-100 text-gray-100 flex">
+  <!-- Sidebar -->
+  <aside class="w-64 bg-white text-gray-800 shadow-lg p-6 hidden md:block">
+    <h2 class="text-xl font-bold mb-6">📂 האוטומציות שלי</h2>
+    <ul class="space-y-3">
+      <li class="p-3 bg-blue-100 text-blue-700 rounded-lg font-medium">אוטומציה חדשה</li>
+      <li class="p-3 hover:bg-gray-100 rounded-lg cursor-pointer">SLA מיילים</li>
+      <li class="p-3 hover:bg-gray-100 rounded-lg cursor-pointer">סיכום יומי</li>
+      <li class="p-3 hover:bg-gray-100 rounded-lg cursor-pointer">תבניות WhatsApp</li>
+    </ul>
+    <div class="mt-8">
+      <p class="text-xs text-gray-400">גרסה 0.4 · Prototype</p>
     </div>
+  </aside>
 
-    <div class="row">
-      <div class="col card p-20">
-        <div class="section-title">כתבו בשפה חופשית מה תרצו שאעשה עבורכם</div>
-        <div class="hint mb-12">אפשר בעברית, גם עם שגיאות קטנות. אני אבקש פרטים שחסרים ואז אריץ את האוטומציה.</div>
-        <textarea id="freeText" placeholder="דוגמה: כל מייל מ-haim@example.com שלא נענה 10 שעות ב-30 ימים → שלח וואטסאפ / הוסף שורה ל-Google Sheet"></textarea>
-
-        <div class="grid grid-2 mt-16">
-          <button id="btnTestNLP" class="btn btn-outline">בדיקת NLP</button>
-          <button id="btnRun" class="btn btn-primary">הרץ</button>
-        </div>
-
-        <div class="divider"></div>
-
-        <div class="section-title">שאלות שחסרים (להשלמה)</div>
-        <div id="missingBox" class="grid grid-1"></div>
-
-        <div id="tipsBox" class="mt-16 muted small"></div>
-
-        <div class="divider"></div>
-
-        <div class="section-title">תכנית שאובחן (Preview)</div>
-        <pre id="planOut" class="codeblock">// עדיין אין תכנית. לחץ/י "בדיקת NLP".</pre>
-
-        <div class="divider"></div>
-
-        <div class="section-title">תוצאה</div>
-        <pre id="execOut" class="codeblock">// עדיין אין תוצאה.</pre>
+  <!-- Main -->
+  <main class="flex-1 p-6 md:p-10">
+    <!-- Header -->
+    <header class="flex items-center justify-between mb-6">
+      <h1 class="text-2xl font-bold text-gray-800">✨ צור אוטומציה חדשה</h1>
+      <div class="flex items-center gap-3">
+        <span id="g-status" class="pill">טוען…</span>
+        <span id="g-email" class="text-sm text-gray-500"></span>
+        <button id="btn-g-connect" class="px-4 py-2 btn">🔑 התחבר עם Google</button>
+        <button id="btn-g-disconnect" class="px-4 py-2 btn-ghost rounded-lg">התנתק</button>
       </div>
+    </header>
 
-      <div class="col-40 card p-20">
-        <div class="section-title">הגדרות ושימושון</div>
-
-        <div class="mb-12">
-          <div class="label">ברירות־מחדל (נשמרות בדפדפן שלך)</div>
-          <div class="grid grid-1">
-            <div>
-              <label class="label">Spreadsheet ID (Google Sheet)</label>
-              <input id="def_spreadsheetId" class="input" placeholder="https://docs.google.com/spreadsheets/d/<ID>/edit">
-              <div class="help">נשמר כ־<span class="mono">spreadsheetId</span></div>
-            </div>
-            <div>
-              <label class="label">Sheet name (שם הלשונית)</label>
-              <input id="def_sheetName" class="input" placeholder="Sheet1 / InboxLog / SLA">
-              <div class="help">נשמר כ־<span class="mono">sheetName</span></div>
-            </div>
-            <div>
-              <label class="label">יעד ברירת־מחדל</label>
-              <input id="def_to" class="input" placeholder="name@example.com או 9725xxxxxxx (לוואטסאפ)">
-              <div class="help">נשמר כ־<span class="mono">to</span></div>
-            </div>
-          </div>
-          <div class="mt-12">
-            <button id="btnSaveDefaults" class="btn btn-outline">שמור ברירות־מחדל</button>
-            <span id="defaultsSaved" class="muted small" style="margin-inline-start:8px;"></span>
-          </div>
-        </div>
-
-        <div class="divider"></div>
-
-        <div>
-          <div class="section-title">טיפים</div>
-          <ul class="muted small" style="margin:0 0 0 18px; padding:0; list-style: disc;">
-            <li>כתבו “וואטסאפ/WhatsApp”, “מייל/Email”, “גיליון/Sheet”, “לשונית/Sheet name”.</li>
-            <li>לבקשה על גוגל־שיט: ציינו לינק מלא או ה-ID.</li>
-            <li>אם צריך, אשאל שאלות השלמה—רק מלאו ו”הרץ”.</li>
-          </ul>
-        </div>
-
+    <!-- Composer -->
+    <section class="bg-white text-gray-800 shadow-lg rounded-2xl p-8 max-w-3xl">
+      <label class="block text-sm text-gray-600 mb-2">תאר מה אתה צריך:</label>
+      <textarea id="free-text"
+        class="w-full h-40 border rounded-xl p-4 outline-none focus:ring-2 focus:ring-blue-300 mb-6"
+        placeholder='דוגמה: "כל מייל שהגיע ממשתמש מסוים בחודש האחרון ושלא עניתי לו ב-5 שעות — תכניס לגוגל שיט / שלח לי בוואטסאפ"'></textarea>
+      <div class="flex gap-3">
+        <button id="btn-create" class="btn">🚀 צור אוטומציה</button>
+        <button id="btn-debug-nlp" class="btn-ghost px-4 py-2 rounded-xl">בדיקת NLP</button>
       </div>
-    </div>
-  </div>
+    </section>
 
-  <div id="toast" class="toast" style="display:none;"></div>
+    <!-- Chat Section -->
+    <section class="mt-8">
+      <div id="chat" class="space-y-3"></div>
+    </section>
+
+    <!-- Quick defaults (שמורות בדפדפן שלך; לא משנה עיצוב קיים) -->
+    <section class="mt-8 bg-white text-gray-800 shadow rounded-2xl p-4">
+      <div class="text-sm text-gray-700 mb-2">ברירות־מחדל (שמורות מקומית ב־localStorage)</div>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <input id="def_spreadsheetId" class="chat-input rounded-xl p-2" placeholder="Spreadsheet ID או URL מלא">
+        <input id="def_sheetName" class="chat-input rounded-xl p-2" placeholder="Sheet name (לשונית)">
+        <input id="def_to" class="chat-input rounded-xl p-2" placeholder="יעד: name@example.com או 9725xxxxxxx">
+      </div>
+      <div class="mt-2">
+        <button id="btn-save-defaults" class="btn-ghost px-3 py-1 rounded-lg">שמור ברירות־מחדל</button>
+      </div>
+    </section>
+  </main>
 
   <script>
-    // ===================== A) סטטוס בר + כפתורים =====================
+// -------- Config (same-origin) --------
+const API_BASE = '';
 
-    function showToast(msg, ok=true) {
-      const el = document.getElementById('toast');
-      el.textContent = msg;
-      el.style.display = 'block';
-      el.style.background = ok ? '#111' : '#b91c1c';
-      setTimeout(()=>{ el.style.display = 'none'; }, 3000);
-    }
+// -------- UI Helpers (reuse existing classes) --------
+function addBubble(text, who='sys') {
+  const chat = document.getElementById('chat');
+  const wrap = document.createElement('div');
+  wrap.className = 'fade-in flex ' + (who==='user' ? 'justify-end' : 'justify-start');
+  const b = document.createElement('div');
+  b.className = 'bubble rounded-2xl px-4 py-3 max-w-[80%] ' + (who==='user' ? 'user' : '');
+  b.innerHTML = text;
+  wrap.appendChild(b);
+  chat.appendChild(wrap);
+  b.scrollIntoView({ behavior:'smooth', block:'end' });
+  return b;
+}
+function addInputBubble(placeholder, type='text', widthClass='w-72') {
+  const chat = document.getElementById('chat');
+  const wrap = document.createElement('div');
+  wrap.className = 'fade-in flex justify-end';
+  const input = document.createElement('input');
+  input.type = type;
+  input.placeholder = placeholder || '';
+  input.className = `chat-input rounded-2xl p-3 ${widthClass} shadow outline-none focus:ring-2 focus:ring-blue-300`;
+  wrap.appendChild(input);
+  chat.appendChild(wrap);
+  input.scrollIntoView({ behavior:'smooth', block:'end' });
+  input.focus();
+  return input;
+}
+function addButtonBubble(label, onClick) {
+  const chat = document.getElementById('chat');
+  const wrap = document.createElement('div');
+  wrap.className = 'fade-in flex justify-start';
+  const btn = document.createElement('button');
+  btn.className = 'btn rounded-2xl';
+  btn.textContent = label;
+  btn.onclick = onClick;
+  wrap.appendChild(btn);
+  chat.appendChild(wrap);
+  btn.scrollIntoView({ behavior:'smooth', block:'end' });
+  return btn;
+}
+function setGoogleStatus(connected, email) {
+  const s = document.getElementById('g-status');
+  s.textContent = connected ? 'מחובר' : 'לא מחובר';
+  s.className = 'pill ' + (connected ? 'pill-ok' : 'pill-err');
+  document.getElementById('g-email').textContent = connected && email ? `(${email})` : '';
+}
 
-    async function refreshGoogleStatus() {
+// -------- Small utils --------
+function normalizeHebClient(s=''){
+  return String(s)
+    .replace(/[\u200e\u200f]/g,'')
+    .replace(/[“”„״]/g, '"')
+    .replace(/[’׳]/g, "'")
+    .replace(/[–—]/g, '-')
+    .replace(/ווא?טסאפ|ווטסאפ/gi, 'WhatsApp')
+    .replace(/גוגל\s*שיט|שיט\b/gi, 'Sheet')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\bבשם\s+/gi, '');
+}
+
+// Defaults in localStorage
+function getDefaults(){ try { return JSON.parse(localStorage.getItem('defaults')||'{}'); } catch { return {}; } }
+function setDefault(k,v){ const d=getDefaults(); d[k]=v; localStorage.setItem('defaults', JSON.stringify(d)); }
+function getDefault(k){ return getDefaults()[k]||''; }
+
+// Prefill defaults panel if present
+function loadDefaultsToPanel(){
+  const a = document.getElementById('def_spreadsheetId'); if (a) a.value = getDefault('spreadsheetId');
+  const b = document.getElementById('def_sheetName'); if (b) b.value = getDefault('sheetName');
+  const c = document.getElementById('def_to'); if (c) c.value = getDefault('to');
+}
+function saveDefaultsFromPanel(){
+  const a = document.getElementById('def_spreadsheetId'); if (a) setDefault('spreadsheetId', a.value.trim());
+  const b = document.getElementById('def_sheetName'); if (b) setDefault('sheetName', b.value.trim());
+  const c = document.getElementById('def_to'); if (c) setDefault('to', c.value.trim());
+}
+
+// -------- Google auth via our backend --------
+async function refreshGoogleAccount() {
+  try {
+    const r = await fetch('/api/google/auth/status');
+    const j = await r.json();
+    if (j && j.hasRefreshToken) {
       try {
-        const r = await fetch('/api/google/auth/status');
-        const j = await r.json();
-        document.getElementById('status-google').textContent = 'Google: ' + (j?.hasRefreshToken ? 'מחובר' : 'מנותק');
-      } catch {
-        document.getElementById('status-google').textContent = 'Google: לא זמין';
-      }
+        const me = await fetch('/api/google/me').then(x=>x.json());
+        setGoogleStatus(true, me && me.email ? me.email : '');
+      } catch { setGoogleStatus(true, ''); }
+    } else {
+      setGoogleStatus(false, '');
     }
+  } catch { setGoogleStatus(false, ''); }
+}
+async function connectGoogle() {
+  const r = await fetch('/api/google/oauth/url');
+  const j = await r.json();
+  if (!j.ok || !j.url) { addBubble('❌ שגיאה ביצירת קישור Google OAuth'); return; }
+  window.open(j.url, 'google_auth', 'width=520,height=640');
+}
+async function disconnectGoogle() {
+  await fetch('/api/google/logout', { method:'POST' });
+  refreshGoogleAccount();
+}
 
-    async function startGoogleOAuth() {
-      try {
-        const r = await fetch('/api/google/oauth/url');
-        const j = await r.json();
-        if (j?.ok && j.url) {
-          window.location.href = j.url;
-          return;
-        }
-        showToast('נכשל לייצר קישור OAuth', false);
-      } catch (e) {
-        showToast('שגיאה ב-OAuth', false);
-      }
+// -------- NLP Plan with Groq/Heuristic backend --------
+let lastPlan = null;
+
+function showPlanBubble(obj){
+  const pretty = `<pre class="text-xs mt-2"><code>${JSON.stringify(obj, null, 2).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</code></pre>`;
+  addBubble(`Intent: — · Provider: <code>${obj.provider || '—'}</code>${pretty}`);
+}
+
+async function planFromText(textRaw){
+  const text = normalizeHebClient(textRaw || document.getElementById('free-text').value || '');
+  if (!text) { addBubble('❌ לא התקבל טקסט'); return; }
+  addBubble('🔎 מריץ /api/plan/from-text…');
+  try{
+    const r = await fetch('/api/plan/from-text', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ text })
+    });
+    const j = await r.json();
+    lastPlan = j;
+    showPlanBubble(j);
+    if (j && Array.isArray(j.missing) && j.missing.length){
+      askMissingFieldsGeneric([...j.missing], j.proposal || []);
+    } else if (j && j.proposal && j.proposal.length){
+      addButtonBubble('הפעל עכשיו', async ()=>{ await executeWithPlanAndAnswers({}); });
+    } else {
+      addBubble('❌ לא זוהתה כוונה. נסו לנסח עם המקור (Gmail/Sheet) והיעד (Email/WhatsApp).');
     }
+  }catch(e){
+    addBubble('❌ שגיאה בתכנון');
+  }
+}
 
-    async function logoutGoogle() {
-      try {
-        await fetch('/api/google/logout', { method: 'POST' });
-        await refreshGoogleStatus();
-        showToast('התנתקת מגוגל');
-      } catch {
-        showToast('שגיאה בהתנתקות', false);
-      }
+// Generic missing-fields flow based on array of {key,label,example}
+async function askMissingFieldsGeneric(missingArr, proposal){
+  if (!missingArr || !missingArr.length){
+    addButtonBubble('הפעל עכשיו', async ()=>{ await executeWithPlanAndAnswers({}); });
+    return;
+  }
+  const next = missingArr.shift();
+  const question = next.label || next.key || 'ערך חסר';
+  addBubble(question, 'sys');
+  const ph = next.example || '';
+  const input = addInputBubble(ph || '', 'text', 'w-80');
+  addButtonBubble('המשך', async ()=>{
+    const val = (input.value||'').trim();
+    if (!val){ addBubble('❌ ערך חסר'); return; }
+    if (['spreadsheetId','sheetName','to','fromEmail'].includes(next.key)) setDefault(next.key, val);
+    if (lastPlan){
+      lastPlan._answers = lastPlan._answers || {};
+      lastPlan._answers[next.key] = val;
     }
+    addBubble(val, 'user');
+    await askMissingFieldsGeneric(missingArr, proposal);
+  });
+}
 
-    // ===================== C) ברירות־מחדל (localStorage) =====================
-
-    function getDefaults() {
-      try { return JSON.parse(localStorage.getItem('defaults') || '{}'); }
-      catch { return {}; }
+// Patch answers into steps (proposal)
+function applyAnswersToSteps(steps, answers){
+  const patch = (obj)=>{
+    if (!obj || typeof obj!=='object') return;
+    for (const k of Object.keys(obj)){
+      if (obj[k]==='' && answers[k]) obj[k] = answers[k];
+      if (typeof obj[k]==='object') patch(obj[k]);
     }
-    function setDefault(key, val) {
-      const d = getDefaults();
-      d[key] = val;
-      localStorage.setItem('defaults', JSON.stringify(d));
+  };
+  for (const s of (steps||[])){
+    if (s.trigger && s.trigger.params) patch(s.trigger.params);
+    if (s.action && s.action.params) patch(s.action.params);
+  }
+  return steps;
+}
+
+// Execute via our backend
+async function executeWithPlanAndAnswers(extraAnswers){
+  if (!lastPlan || !Array.isArray(lastPlan.proposal) || !lastPlan.proposal.length){
+    addBubble('❌ אין תכנית פעילה להרצה');
+    return;
+  }
+  const answers = Object.assign({}, lastPlan._answers || {}, extraAnswers || {});
+  const steps = applyAnswersToSteps(JSON.parse(JSON.stringify(lastPlan.proposal)), answers);
+  addBubble('⚙️ מריץ /api/automations/execute…');
+  try{
+    const r = await fetch('/api/automations/execute', {
+      method:'POST',
+      headers:{ 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: document.getElementById('free-text').value || '', steps })
+    });
+    const j = await r.json();
+    const pretty = `<pre class="text-xs mt-2"><code>${JSON.stringify(j, null, 2).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</code></pre>`;
+    if (j.ok){
+      addBubble('✅ בוצע בהצלחה' + pretty);
+    } else {
+      addBubble('❌ שגיאה בהרצה' + pretty);
     }
-    function getDefault(key) {
-      const d = getDefaults();
-      return d[key] || '';
-    }
-    function loadDefaultsToPanel() {
-      document.getElementById('def_spreadsheetId').value = getDefault('spreadsheetId');
-      document.getElementById('def_sheetName').value = getDefault('sheetName');
-      document.getElementById('def_to').value = getDefault('to');
-    }
-    function saveDefaultsFromPanel() {
-      setDefault('spreadsheetId', document.getElementById('def_spreadsheetId').value.trim());
-      setDefault('sheetName', document.getElementById('def_sheetName').value.trim());
-      setDefault('to', document.getElementById('def_to').value.trim());
-      const stamp = new Date().toLocaleTimeString();
-      document.getElementById('defaultsSaved').textContent = 'נשמר (' + stamp + ')';
-      showToast('ברירות־מחדל נשמרו');
-    }
+  }catch(e){
+    addBubble('❌ שגיאה בהרצה');
+  }
+}
 
-    // ===================== B) שאלות חסרים (UI נוח) =====================
+// Bindings
+document.getElementById('btn-g-connect').addEventListener('click', connectGoogle);
+document.getElementById('btn-g-disconnect').addEventListener('click', disconnectGoogle);
+document.getElementById('btn-debug-nlp').addEventListener('click', ()=> planFromText());
+document.getElementById('btn-create').addEventListener('click', ()=> planFromText());
+document.getElementById('btn-save-defaults').addEventListener('click', ()=> {
+  saveDefaultsFromPanel();
+  addBubble('✅ ברירות־מחדל נשמרו (מקומית בדפדפן)');
+});
 
-    function humanTipForKey(k, example) {
-      if (k === 'to') {
-        return 'אפשר כתובת מייל או מספר וואטסאפ בינלאומי. דוגמה: name@example.com או 9725xxxxxxx';
-      }
-      if (k === 'spreadsheetId') {
-        return 'אפשר להדביק את כל הקישור של ה-Sheet; אני אחלץ את ה-ID לבד.';
-      }
-      if (example) return 'לדוגמה: ' + example;
-      return '';
-    }
-
-    function renderMissing(missing) {
-      const box = document.getElementById('missingBox');
-      box.innerHTML = '';
-      if (!missing || !missing.length) {
-        box.innerHTML = '<div class="muted small">אין פרטים חסרים כרגע.</div>';
-        return;
-      }
-      for (const m of missing) {
-        const id = 'miss_' + m.key;
-        const tip = humanTipForKey(m.key, m.example || '');
-        const defVal = getDefault(m.key);
-        const placeholder = m.example || (m.key === 'to' ? 'name@example.com או 9725xxxxxxx' : '');
-        const html = `
-          <div class="shadow-inset p-16">
-            <label for="${id}" class="label">${m.label || m.key}</label>
-            <input id="${id}" class="input" placeholder="${placeholder}" value="${defVal ? String(defVal).replace(/"/g,'&quot;') : ''}" />
-            ${ tip ? `<div class="help">${tip}</div>` : '' }
-            <div class="help">מפתח: <span class="mono">${m.key}</span></div>
-          </div>
-        `;
-        const wrap = document.createElement('div');
-        wrap.innerHTML = html;
-        box.appendChild(wrap);
-      }
-      document.getElementById('tipsBox').innerHTML =
-        'צריך להשלים כמה פרטים—מלא/י מעלה ואז לחץ/י “הרץ”.';
-    }
-
-    function collectMissing(missing) {
-      const out = {};
-      for (const m of (missing || [])) {
-        const el = document.getElementById('miss_'+m.key);
-        if (!el) continue;
-        const v = (el.value || '').trim();
-        if (v) {
-          out[m.key] = v;
-          setDefault(m.key, v); // נשמור כברירת־מחדל להבא
-        }
-      }
-      return out;
-    }
-
-    function applyAnswersToSteps(steps, answers) {
-      const patch = (obj) => {
-        if (!obj || typeof obj !== 'object') return;
-        for (const k of Object.keys(obj)) {
-          if (obj[k] === '' && answers[k]) obj[k] = answers[k];
-          if (typeof obj[k] === 'object') patch(obj[k]);
-        }
-      };
-      for (const step of (steps || [])) {
-        if (step.trigger && step.trigger.params) patch(step.trigger.params);
-        if (step.action && step.action.params) patch(step.action.params);
-      }
-      return steps;
-    }
-
-    // ===================== נורמליזציה עברית קלה בצד לקוח =====================
-
-    function normalizeHebClient(s='') {
-      return String(s)
-        .replace(/[\u200e\u200f]/g,'')
-        .replace(/[“”„״]/g, '"')
-        .replace(/[’׳]/g, "'")
-        .replace(/[–—]/g, '-')
-        .replace(/ווא?טסאפ|ווטסאפ/gi, 'WhatsApp')
-        .replace(/גוגל\s*שיט|שיט\b/gi, 'Sheet')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .replace(/\bבשם\s+/gi, ''); // מסיר "בשם " בתחילת שם לשונית
-    }
-
-    // ===================== קריאות API: תכנון והרצה =====================
-
-    let lastPlan = null;       // נשמור את התכנית האחרונה לתצוגה/הרצה
-    let lastProvider = '—';    // לעדכון הסטטוס־בר
-    let lastModel = '—';       // אין לנו API לחשוף מודל מהשרת; נשאיר "—" (או נעדכן אם מחזיר בעתיד)
-
-    function updateProviderStatusInBar() {
-      document.getElementById('status-provider').textContent = 'Provider: ' + (lastProvider || '—');
-      document.getElementById('status-model').textContent = 'Model: ' + (lastModel || '—');
-    }
-
-    function showPlan(plan) {
-      const out = document.getElementById('planOut');
-      out.textContent = JSON.stringify(plan, null, 2);
-    }
-
-    async function planFromText() {
-      const raw = document.getElementById('freeText').value || '';
-      const text = normalizeHebClient(raw);
-      document.getElementById('planOut').textContent = '// מריץ /api/plan/from-text…';
-      try {
-        const r = await fetch('/api/plan/from-text', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text })
-        });
-        const j = await r.json();
-        lastProvider = j?.provider || lastProvider;
-        updateProviderStatusInBar();
-
-        lastPlan = j;
-        showPlan(j);
-        renderMissing(j?.missing || []);
-
-        if (!j?.proposal?.length) {
-          document.getElementById('tipsBox').innerHTML =
-            '<span class="err">לא זוהתה כוונה</span> – נסו לנסח עם המקור (Gmail/Sheet) והיעד (Email/WhatsApp).';
-        } else {
-          document.getElementById('tipsBox').innerHTML = '<span class="ok">תכנית מוכנה</span> – מלאו פרטים חסרים ולחצו "הרץ".';
-        }
-      } catch (e) {
-        document.getElementById('planOut').textContent = '// שגיאה בתכנון';
-        showToast('שגיאה בתכנון', false);
-      }
-    }
-
-    async function runAutomation() {
-      const answers = collectMissing(lastPlan?.missing || []);
-      let steps = (lastPlan?.proposal || []).map(s => JSON.parse(JSON.stringify(s)));
-      steps = applyAnswersToSteps(steps, answers);
-
-      // אם עדיין חסר—נבקש לעצור
-      const stillMissing = (lastPlan?.missing || []).filter(m => !(answers[m.key]));
-      if (stillMissing.length) {
-        showToast('חסרים פרטים – מלא/י למעלה', false);
-        return;
-      }
-
-      document.getElementById('execOut').textContent = '// מריץ /api/automations/execute…';
-      try {
-        const r = await fetch('/api/automations/execute', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: document.getElementById('freeText').value, steps })
-        });
-        const j = await r.json();
-        if (!j?.ok) {
-          document.getElementById('execOut').textContent = JSON.stringify(j, null, 2);
-          showToast('שגיאה בהרצה', false);
-          return;
-        }
-        document.getElementById('execOut').textContent = JSON.stringify(j, null, 2);
-        showToast('בוצע בהצלחה');
-      } catch (e) {
-        document.getElementById('execOut').textContent = '// שגיאה בהרצה';
-        showToast('שגיאה בהרצה', false);
-      }
-    }
-
-    // ===================== אירועים ואתחול =====================
-
-    document.getElementById('btnGoogle').addEventListener('click', startGoogleOAuth);
-    document.getElementById('btnLogout').addEventListener('click', logoutGoogle);
-    document.getElementById('btnTestNLP').addEventListener('click', planFromText);
-    document.getElementById('btnRun').addEventListener('click', runAutomation);
-    document.getElementById('btnSaveDefaults').addEventListener('click', saveDefaultsFromPanel);
-
-    // טעינה ראשונית
-    (function init() {
-      loadDefaultsToPanel();
-      refreshGoogleStatus();
-
-      // אם הגעת עם #connected=1 אחרי OAuth – נעדכן בר
-      if (location.hash.includes('connected=1')) {
-        showToast('התחברת ל-Google');
-        location.hash = '';
-      }
-      updateProviderStatusInBar(); // unknown עד שנקבל תשובה מ-NLP
-    })();
+// init
+refreshGoogleAccount();
+loadDefaultsToPanel();
   </script>
 </body>
 </html>
