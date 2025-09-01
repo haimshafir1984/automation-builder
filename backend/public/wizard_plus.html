@@ -31,7 +31,6 @@
 </head>
 <body class="min-h-screen text-gray-100 flex">
 
-  <!-- Sidebar -->
   <aside class="w-64 bg-white text-gray-800 shadow-lg p-6 hidden md:block">
     <h2 class="text-xl font-bold mb-6">📂 האוטומציות שלי</h2>
     <ul class="space-y-3">
@@ -40,13 +39,11 @@
       <li class="p-3 hover:bg-gray-100 rounded-lg cursor-pointer">סיכום פגישות</li>
       <li class="p-3 hover:bg-gray-100 rounded-lg cursor-pointer">הזנות ל-Google Sheets</li>
     </ul>
-
     <div class="mt-8 space-y-2">
       <button id="btn-debug-nlp" class="w-full btn-ghost rounded-lg">בדיקת NLP</button>
     </div>
   </aside>
 
-  <!-- Main -->
   <section class="flex-1">
     <header class="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
       <h1 class="text-xl font-bold">Wizard Plus</h1>
@@ -65,23 +62,19 @@
         </div>
       </div>
 
-      <!-- שורת הקלט -->
       <div class="flex gap-2">
-        <input id="free-text" class="flex-1 chat-input rounded-xl px-3 py-3" placeholder="למשל: כל פעם שנכנסת שורה בלשונית project בעמודה project menger עם הערך haim shafir — שלח לי למייל" />
+        <input id="free-text" class="flex-1 chat-input rounded-xl px-3 py-3"
+               placeholder="למשל: טבלה משותפת לשני אנשים; כל פעם שאחד מהם שולח מייל—להוסיף שורה עם השולח/נושא/תאריך/תוכן" />
         <button id="btn-plan" class="btn">תכנן</button>
         <button id="btn-run" class="btn" disabled>הרץ</button>
       </div>
 
-      <!-- עזרה מעל השדות החסרים -->
       <div id="missing-intro" class="help hidden"></div>
-
-      <!-- שדות חסרים -->
       <div id="missing-fields" class="grid gap-2 md:grid-cols-2"></div>
     </main>
   </section>
 
   <script>
-    // ===== Elements =====
     const chat = document.getElementById('chat');
     const freeText = document.getElementById('free-text');
     const btnPlan = document.getElementById('btn-plan');
@@ -98,7 +91,6 @@
     let lastMissing = [];
     let lastText = "";
 
-    // ===== Chat helpers =====
     function addBubble(text, who='bot') {
       const div = document.createElement('div');
       div.className = 'bubble fade-in' + (who==='user' ? ' user' : '');
@@ -122,21 +114,21 @@
       const first = missingFields.querySelector('input[data-key]');
       if (first) first.focus();
     }
-
     function updateMissingHelp(missing) {
       if (!missing.length) { missingIntro.classList.add('hidden'); missingIntro.textContent = ''; return; }
       const keys = missing.map(m => m.key);
       if (keys.includes('to')) {
-        missingIntro.textContent = 'מלאו את כתובת המייל, או מספר WhatsApp בפורמט בינלאומי (9725xxxxxxxx).';
+        missingIntro.textContent = 'מלאו את כתובת המייל (לשליחה).';
       } else if (keys.includes('spreadsheetId')) {
-        missingIntro.textContent = 'אפשר להדביק את כל קישור הגיליון — אנחנו נוציא את ה-ID לבד.';
+        missingIntro.textContent = 'אפשר להדביק את כל קישור הגיליון — נוציא את ה-ID לבד.';
+      } else if (keys.includes('fromEmails')) {
+        missingIntro.textContent = 'הזינו כמה כתובות מייל מופרדות בפסיק: name1@ex.com, name2@ex.com';
       } else {
         missingIntro.textContent = 'מלאו את הפרטים החסרים ולחצו "הרץ".';
       }
       missingIntro.classList.remove('hidden');
     }
 
-    // ===== Google auth UI =====
     function setGoogleUI(connected, email) {
       if (connected) {
         gStatus.textContent = 'מחובר';
@@ -153,11 +145,9 @@
         btnDisconnect.classList.add('hidden');
       }
     }
-
     async function refreshGoogleAccount() {
       let justConnected = false;
       if (location.hash.includes('connected=1')) justConnected = true;
-
       try {
         const r1 = await fetch('/api/google/auth/status');
         const s = r1.ok ? await r1.json() : null;
@@ -171,13 +161,11 @@
           return;
         }
       } catch {}
-
       try {
         const r = await fetch('/api/google/me');
         const j = await r.json();
         setGoogleUI(!!j.ok, j.emailAddress);
-      } catch { if (!justConnected) setGoogleUI(false); }
-
+      } catch { setGoogleUI(false); }
       if (justConnected) location.hash = '';
     }
 
@@ -187,32 +175,17 @@
         const j = await r.json();
         if (j.ok && j.url) window.location.href = j.url;
         else addBubble('❌ לא הצלחתי לקבל קישור התחברות');
-      } catch {
-        addBubble('❌ שגיאה בקישור התחברות לגוגל');
-      }
+      } catch { addBubble('❌ שגיאה בקישור התחברות לגוגל'); }
     };
     btnDisconnect.onclick = async () => {
       try { await fetch('/api/google/logout', { method:'POST' }); } finally { refreshGoogleAccount(); }
     };
 
-    // ===== WhatsApp normalization =====
-    function normalizeWhatsAppInput(s='') {
-      let x = String(s).trim().replace(/^whatsapp:/i,'');
-      x = x.replace(/[^\d+]/g,'');
-      return x.startsWith('+') ? x : ('+' + x);
-    }
-    function looksLikeIntlPhone(s='') {
-      const n = normalizeWhatsAppInput(s);
-      return /^\+\d{9,15}$/.test(n);
-    }
-
-    // ===== Planning =====
     btnPlan.onclick = async () => {
       const text = (freeText.value || '').trim();
       if (!text) return;
       addBubble(text, 'user');
       btnPlan.disabled = true;
-
       try {
         const res = await fetch('/api/plan/from-text', {
           method:'POST', headers:{'Content-Type':'application/json'},
@@ -233,31 +206,27 @@
           addBubble('צריך להשלים כמה פרטים—מלאו למטה ואז לחצו "הרץ".');
           renderMissing(lastMissing);
           btnRun.disabled = false;
-        } else {
+        } else if (lastPlan.length) {
           addBubble('מעולה — אפשר להריץ.');
           missingFields.innerHTML = ''; updateMissingHelp([]);
           btnRun.disabled = false;
+        } else {
+          addBubble('לא זוהתה כוונה. נסו לנסח אחרת או להוסיף עוד פרטים.');
         }
       } catch (e) {
         console.error(e);
         addBubble('❌ שגיאה בתכנון');
-      } finally {
-        btnPlan.disabled = false;
-      }
+      } finally { btnPlan.disabled = false; }
     };
 
-    // ===== Execute =====
     btnRun.onclick = async () => {
       btnRun.disabled = true;
-
       const filled = {};
       missingFields.querySelectorAll('input[data-key]').forEach(inp => {
         const k = inp.dataset.key;
         let v = inp.value.trim();
-        if (k === 'to' && /^\+?\d/.test(v)) v = normalizeWhatsAppInput(v);
         filled[k] = v;
       });
-
       const steps = (lastPlan || []).map(s => {
         const copy = JSON.parse(JSON.stringify(s));
         if (copy.trigger?.params) {
@@ -292,7 +261,6 @@
       }
     };
 
-    // ===== Debug NLP =====
     document.getElementById('btn-debug-nlp').onclick = async () => {
       const text = (freeText.value || '').trim();
       if (!text) { addBubble('❌ כתוב מטרה חופשית בתיבה למעלה'); return; }
@@ -306,12 +274,9 @@
         const pretty = `<pre class="text-xs mt-2"><code>${JSON.stringify(j, null, 2)
           .replace(/</g,'&lt;').replace(/>/g,'&gt;')}</code></pre>`;
         addBubble(`Intent: <code>${(j.nlp && j.nlp.intent) || '—'}</code> · Provider: <code>${j.provider || '—'}</code>${pretty}`);
-      } catch {
-        addBubble('❌ שגיאת בדיקת תכנון');
-      }
+      } catch { addBubble('❌ שגיאת בדיקת תכנון'); }
     };
 
-    // init
     refreshGoogleAccount();
   </script>
 </body>

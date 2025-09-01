@@ -5,10 +5,10 @@
  * - Google OAuth (gmail.readonly, gmail.send, spreadsheets) + token persistence (file/Upstash)
  * - Token store health endpoints
  * - NLP Planner (skill registry + heuristics) inline; optional LLMs (GROQ/OpenAI/Ollama)
- * - Triggers: gmail.unreplied, sheets.match (new rows & column filter)
+ * - Triggers: gmail.unreplied, sheets.match, gmail.from  ← NEW
  * - Actions: sheets.append, email.send (via Gmail), whatsapp.send (Twilio), slack.send, telegram.send, webhook.call
  *
- * IMPORTANT ENVs:
+ * ENV (required):
  *  OAUTH_REDIRECT_URL=https://automation-builder-backend.onrender.com/api/google/oauth/callback
  *  GOOGLE_CLIENT_ID=... , GOOGLE_CLIENT_SECRET=...
  *
@@ -18,7 +18,7 @@
  *   or
  *  TOKEN_STORE=redis, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
  *
- * KV for trigger state (last processed row):
+ * KV for trigger state (last processed rows/messages):
  *  KV_FILE_PATH=/data/store.json
  *
  * NLP:
@@ -31,9 +31,6 @@
  *  TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN
  *  TWILIO_WHATSAPP_FROM=+9725xxxxxxx
  *  TWILIO_WHATSAPP_TO=+9725xxxxxxx   (optional default "to")
- *
- * Other integrations (optional):
- *  SLACK_WEBHOOK_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, WEBHOOK_URL
  */
 
 "use strict";
@@ -47,7 +44,6 @@ const { google } = require("googleapis");
 const { JWT } = require("google-auth-library");
 const twilio = require("twilio");
 
-// Node >=18 has global fetch
 const fetchFn = (...args) => fetch(...args);
 
 const app = express();
@@ -103,6 +99,7 @@ const KV_FILE_PATH = process.env.KV_FILE_PATH || path.join(process.cwd(), "store
 
 const capabilities = [
   "gmail.unreplied",
+  "gmail.from",      // NEW
   "sheets.match",
   "sheets.append",
   "email.send",
@@ -191,7 +188,7 @@ async function storeHealth() {
   return res;
 }
 
-// ---------- KV (for last processed rows etc.) ----------
+// ---------- KV ----------
 async function kvSet(key, val) {
   try {
     if (TOKEN_STORE === "redis") {
@@ -272,7 +269,7 @@ app.get("/api/debug/store", async (_, res) => {
   res.json({ ok: health.ok, store: TOKEN_STORE, error: health.error || null });
 });
 
-// ---------- Google OAuth Routes ----------
+// ---------- Google OAuth ----------
 const OAUTH_SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/gmail.send",
@@ -367,13 +364,17 @@ app.get("/api/google/me", async (req, res) => {
 //                               NLP PLANNER
 // ============================================================================
 
-// --- Skill registry (what fields each step needs) ---
 const SKILLS = {
   triggers: {
     "gmail.unreplied": {
       required: ["fromEmail"],
       optional: ["newerThanDays", "hours", "limit"],
       defaults: { newerThanDays: 30, hours: 10, limit: 50 },
+    },
+    "gmail.from": { // NEW
+      required: ["fromEmails"],
+      optional: ["newerThanDays", "limit"],
+      defaults: { newerThanDays: 30, limit: 100 },
     },
     "sheets.match": {
       required: ["spreadsheetId", "sheetName", "columnName", "equals"],
@@ -400,13 +401,16 @@ const SKILLS = {
   },
 };
 
-// --- Utils / extractors (Hebrew-friendly) ---
 function norm(s = "") {
   return String(s).toLowerCase().replace(/[״“”]/g, '"').trim();
 }
 function extractEmail(s = "") {
   const m = s.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/);
   return m ? m[0] : "";
+}
+function extractEmails(s = "") { // NEW: all emails
+  const arr = s.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g);
+  return Array.isArray(arr) ? Array.from(new Set(arr)) : [];
 }
 function extractSpreadsheetId(s = "") {
   const m = s.match(/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
@@ -474,160 +478,69 @@ function heuristicsPlan(text) {
   const steps = [];
   const missing = [];
 
-  // Gmail SLA
+  // (A) Gmail SLA
   const isGmail = /(gmail|מייל|דוא"ל|אימייל)/i.test(text);
   const mentionsUnreplied = /(לא\s*נענה|ללא\s*מענה|unrepl|sla)/i.test(text);
-
   if (isGmail && mentionsUnreplied) {
     const fromEmail = extractEmail(text);
     const newerThanDays = extractNewerThanDays(text);
     const hours = extractHours(text);
-
-    steps.push({
-      trigger: {
-        type: "gmail.unreplied",
-        params: { fromEmail: fromEmail || "", newerThanDays, hours, limit: 50 },
-      },
-    });
-
+    steps.push({ trigger: { type: "gmail.unreplied", params: { fromEmail: fromEmail || "", newerThanDays, hours, limit: 50 } } });
     if (/whats\s*app|ווטסאפ|וואטסאפ/i.test(text)) {
-      steps.push({
-        action: {
-          type: "whatsapp.send",
-          params: { to: "", message: "נמצא מייל שלא נענה: {{item.subject}} — {{item.webLink}}" },
-        },
-      });
-      if (!fromEmail)
-        missing.push({
-          key: "fromEmail",
-          label: "כתובת המייל של השולח",
-          example: "name@example.com",
-        });
-      missing.push({
-        key: "to",
-        label: 'מספר WhatsApp כולל קידומת מדינה',
-        example: "9725xxxxxxxx",
-      });
+      steps.push({ action: { type: "whatsapp.send", params: { to: "", message: "נמצא מייל שלא נענה: {{item.subject}} — {{item.webLink}}" } } });
+      if (!fromEmail) missing.push({ key: "fromEmail", label: "כתובת המייל של השולח", example: "name@example.com" });
+      missing.push({ key: "to", label: 'מספר WhatsApp כולל קידומת מדינה', example: "9725xxxxxxxx" });
       return { steps, missing };
     } else {
       const spreadsheetId = extractSpreadsheetId(text);
-      steps.push({
-        action: {
-          type: "sheets.append",
-          params: {
-            spreadsheetId: spreadsheetId || "",
-            sheetName: "SLA",
-            row: {
-              from: "{{item.from}}",
-              subject: "{{item.subject}}",
-              date: "{{item.date}}",
-              threadId: "{{item.threadId}}",
-              webLink: "{{item.webLink}}",
-            },
-          },
-        },
-      });
-      if (!fromEmail)
-        missing.push({
-          key: "fromEmail",
-          label: "כתובת המייל של השולח",
-          example: "name@example.com",
-        });
-      if (!spreadsheetId)
-        missing.push({
-          key: "spreadsheetId",
-          label: "ה־ID של ה-Google Sheet",
-          example: "https://docs.google.com/spreadsheets/d/<ID>/edit",
-        });
+      steps.push({ action: { type: "sheets.append", params: { spreadsheetId: spreadsheetId || "", sheetName: "SLA",
+        row: { from: "{{item.from}}", subject: "{{item.subject}}", date: "{{item.date}}", threadId: "{{item.threadId}}", webLink: "{{item.webLink}}" } } } });
+      if (!fromEmail) missing.push({ key: "fromEmail", label: "כתובת המייל של השולח", example: "name@example.com" });
+      if (!spreadsheetId) missing.push({ key: "spreadsheetId", label: "ה־ID של ה-Google Sheet", example: "https://docs.google.com/spreadsheets/d/<ID>/edit" });
       return { steps, missing };
     }
   }
 
-  // Sheets row match
+  // (B) “טבלה/גיליון משותפת לשני אנשים… כל פעם שאחד מהם ישלח מייל…”
+  const mentionsSheetOrTable = /(גיליון|שיט|sheet|טבלה)/i.test(text);
+  const mentionsTwoPeopleMail = /(2|שניים|שני|שתיים|שתי)\s*אנשים.*ישל(ח|חו)\s*מייל|אחד מהם ישל(ח|חו)\s*מייל|כל פעם שאחד מהם/i.test(text) || (/ישל(ח|חו)\s*מייל/i.test(text) && mentionsSheetOrTable);
+  if (mentionsSheetOrTable && mentionsTwoPeopleMail) {
+    const emails = extractEmails(text); // אם הוזכרו מיילים בטקסט
+    const fromEmails = emails.join(", ");
+    const spreadsheetId = extractSpreadsheetId(text) || "";
+    const sheetName = extractSheetName(text) || "InboxLog";
+    steps.push({ trigger: { type: "gmail.from", params: { fromEmails: fromEmails || "", newerThanDays: 30, limit: 100 } } });
+    steps.push({ action: { type: "sheets.append", params: { spreadsheetId: spreadsheetId || "", sheetName,
+      row: { from: "{{item.from}}", subject: "{{item.subject}}", date: "{{item.date}}", snippet: "{{item.snippet}}", body: "{{item.body}}", threadId: "{{item.threadId}}", webLink: "{{item.webLink}}" } } } });
+    if (!fromEmails) missing.push({ key: "fromEmails", label: "כתובות המייל של השולחים (מופרד בפסיק)", example: "a@ex.com, b@ex.com" });
+    if (!spreadsheetId) missing.push({ key: "spreadsheetId", label: "ה-ID של ה-Google Sheet", example: "https://docs.google.com/spreadsheets/d/<ID>/edit" });
+    missing.push({ key: "sheetName", label: "שם הגיליון (Sheet)", example: "InboxLog" });
+    return { steps, missing };
+  }
+
+  // (C) Sheets row match (כבר היה)
   if (/(google\s*sheets?|גיליון|שיט|sheet|לשונית|טאב|row|שורה)/i.test(text)) {
     const spreadsheetId = extractSpreadsheetId(text) || "";
     const sheetName = extractSheetName(text) || "Sheet1";
     const columnName = extractColumnName(text) || "";
     const equals = extractEqualsValue(text) || "";
-
-    steps.push({
-      trigger: {
-        type: "sheets.match",
-        params: { spreadsheetId, sheetName, columnName, equals, mode: "new" },
-      },
-    });
-
+    steps.push({ trigger: { type: "sheets.match", params: { spreadsheetId, sheetName, columnName, equals, mode: "new" } } });
     if (/מייל|email|אימייל/i.test(text)) {
-      steps.push({
-        action: {
-          type: "email.send",
-          params: {
-            to: "",
-            subject: "התראה מגיליון {{item.__sheet}}",
-            body: "{{item.__rowAsText}}",
-          },
-        },
-      });
-      if (!spreadsheetId)
-        missing.push({
-          key: "spreadsheetId",
-          label: "ה-ID של ה-Google Sheet",
-          example: "https://docs.google.com/spreadsheets/d/<ID>/edit",
-        });
-      if (!sheetName)
-        missing.push({ key: "sheetName", label: "שם הגליון (Sheet)", example: "SLA או Sheet1" });
-      if (!columnName)
-        missing.push({
-          key: "columnName",
-          label: "שם העמודה/השדה",
-          example: "project menger",
-        });
-      if (!equals)
-        missing.push({
-          key: "equals",
-          label: "הערך שתואם להתראה",
-          example: "haim shafir",
-        });
-      missing.push({
-        key: "to",
-        label: "כתובת מייל לקבלת ההתראה",
-        example: "name@example.com",
-      });
+      steps.push({ action: { type: "email.send", params: { to: "", subject: "התראה מגיליון {{item.__sheet}}", body: "{{item.__rowAsText}}" } } });
+      if (!spreadsheetId) missing.push({ key: "spreadsheetId", label: "ה-ID של ה-Google Sheet", example: "https://docs.google.com/spreadsheets/d/<ID>/edit" });
+      if (!sheetName)     missing.push({ key: "sheetName", label: "שם הגליון (Sheet)", example: "SLA או Sheet1" });
+      if (!columnName)    missing.push({ key: "columnName", label: "שם העמודה/השדה", example: "project menger" });
+      if (!equals)        missing.push({ key: "equals", label: "הערך שתואם להתראה", example: "haim shafir" });
+      missing.push({ key: "to", label: "כתובת מייל לקבלת ההתראה", example: "name@example.com" });
       return { steps, missing };
     }
-
     if (/whats\s*app|ווטסאפ|וואטסאפ/i.test(text)) {
-      steps.push({
-        action: {
-          type: "whatsapp.send",
-          params: { to: "", message: "שורה חדשה: {{item.__rowAsText}}" },
-        },
-      });
-      if (!spreadsheetId)
-        missing.push({
-          key: "spreadsheetId",
-          label: "ה-ID של ה-Google Sheet",
-          example: "https://docs.google.com/spreadsheets/d/<ID>/edit",
-        });
-      if (!sheetName)
-        missing.push({ key: "sheetName", label: "שם הגליון (Sheet)", example: "SLA או Sheet1" });
-      if (!columnName)
-        missing.push({
-          key: "columnName",
-          label: "שם העמודה/השדה",
-          example: "project menger",
-        });
-      if (!equals)
-        missing.push({
-          key: "equals",
-          label: "הערך שתואם להתראה",
-          example: "haim shafir",
-        });
-      missing.push({
-        key: "to",
-        label: 'מספר WhatsApp כולל קידומת מדינה',
-        example: "9725xxxxxxxx",
-      });
+      steps.push({ action: { type: "whatsapp.send", params: { to: "", message: "שורה חדשה: {{item.__rowAsText}}" } } });
+      if (!spreadsheetId) missing.push({ key: "spreadsheetId", label: "ה-ID של ה-Google Sheet", example: "https://docs.google.com/spreadsheets/d/<ID>/edit" });
+      if (!sheetName)     missing.push({ key: "sheetName", label: "שם הגליון (Sheet)", example: "SLA או Sheet1" });
+      if (!columnName)    missing.push({ key: "columnName", label: "שם העמודה/השדה", example: "project menger" });
+      if (!equals)        missing.push({ key: "equals", label: "הערך שתואם להתראה", example: "haim shafir" });
+      missing.push({ key: "to", label: 'מספר WhatsApp כולל קידומת מדינה', example: "9725xxxxxxxx" });
       return { steps, missing };
     }
   }
@@ -635,96 +548,35 @@ function heuristicsPlan(text) {
   return { steps: [], missing: [] };
 }
 
-// --- LLM planner (optional) ---
+// (אופציונלי: LLM—נשאר כבוי ברירת מחדל; אפשר להפעיל בהמשך)
 const JSON_SCHEMA_PROMPT = `
 בחר טריגרים ופעולות מתוך הרשימה, והחזר JSON בודד.
-- טריגרים: gmail.unreplied, sheets.match
+- טריגרים: gmail.unreplied, gmail.from, sheets.match
 - פעולות: sheets.append, email.send, whatsapp.send, slack.send, telegram.send, webhook.call
 - מלא רק את השדות הבאים לכל טריגר/פעולה, לפי הצורך:
   gmail.unreplied: { fromEmail*, newerThanDays, hours, limit }
+  gmail.from:      { fromEmails*, newerThanDays, limit }
   sheets.match:    { spreadsheetId*, sheetName*, columnName*, equals*, mode? }
-  sheets.append:   { spreadsheetId*, sheetName*, row* (אובייקט מפתח->ערך עם {{item.*}}) }
+  sheets.append:   { spreadsheetId*, sheetName*, row* (obj with {{item.*}}) }
   email.send:      { to*, subject?, body? }
   whatsapp.send:   { to*, message? }
   slack.send:      { message? }
   telegram.send:   { message? }
   webhook.call:    { url?, method?, headers?, context? }
-החזר מבנה: { "proposal":[ {trigger?},{action?}, ... ], "missing":[ {key,label,example} ... ] } בלבד, בלי הסברים.
-שים לב לעברית (לשונית/שדה/עמודה/גיליון/מייל/וואטסאפ).
+החזר: { "proposal":[...], "missing":[...] } בלבד.
 `;
 
-async function callLLMForPlan(text) {
-  if (NLP_PROVIDER === "groq") {
-    if (!GROQ_API_KEY) throw new Error("GROQ_API_KEY missing");
-    const resp = await fetchFn("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${GROQ_API_KEY}` },
-      body: JSON.stringify({
-        model: GROQ_MODEL,
-        temperature: 0,
-        messages: [
-          { role: "system", content: JSON_SCHEMA_PROMPT },
-          { role: "user", content: text },
-        ],
-      }),
-    });
-    const data = await resp.json();
-    const content = data?.choices?.[0]?.message?.content?.trim() || "{}";
-    return JSON.parse(content);
-  }
-  if (NLP_PROVIDER === "openai") {
-    if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY missing");
-    const resp = await fetchFn("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_API_KEY}` },
-      body: JSON.stringify({
-        model: OPENAI_MODEL,
-        temperature: 0,
-        messages: [
-          { role: "system", content: JSON_SCHEMA_PROMPT },
-          { role: "user", content: text },
-        ],
-      }),
-    });
-    const data = await resp.json();
-    const content = data?.choices?.[0]?.message?.content?.trim() || "{}";
-    return JSON.parse(content);
-  }
-  if (NLP_PROVIDER === "ollama") {
-    if (!OLLAMA_BASE_URL) throw new Error("OLLAMA_BASE_URL missing");
-    const body = {
-      model: OLLAMA_MODEL,
-      prompt: `${JSON_SCHEMA_PROMPT}\n\nטקסט:\n${text}\n\nהחזר JSON:`,
-    };
-    const resp = await fetchFn(`${OLLAMA_BASE_URL}/api/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const raw = await resp.text();
-    const jsonStr = raw.trim().split(/\n/).pop();
-    return JSON.parse(jsonStr);
-  }
-  throw new Error("LLM provider disabled");
-}
+async function callLLMForPlan(_text){ throw new Error("LLM disabled in this build"); }
 
 function humanizeKey(skillName, key) {
   const map = {
-    spreadsheetId: {
-      label: "ה-ID של ה-Google Sheet",
-      example: "https://docs.google.com/spreadsheets/d/<ID>/edit",
-    },
-    sheetName: { label: "שם הגליון (Sheet)", example: "SLA או Sheet1" },
-    columnName: { label: "שם העמודה/השדה", example: "project menger" },
-    equals: { label: "הערך שתואם להתראה", example: "haim shafir" },
-    fromEmail: { label: "כתובת המייל של השולח", example: "name@example.com" },
-    to: {
-      label:
-        skillName === "whatsapp.send"
-          ? 'מספר WhatsApp כולל קידומת מדינה'
-          : "כתובת מייל לקבלת ההתראה",
-      example: skillName === "whatsapp.send" ? "9725xxxxxxxx" : "name@example.com",
-    },
+    spreadsheetId: { label: "ה-ID של ה-Google Sheet", example: "https://docs.google.com/spreadsheets/d/<ID>/edit" },
+    sheetName:     { label: "שם הגיליון (Sheet)", example: "InboxLog" },
+    columnName:    { label: "שם העמודה/השדה", example: "project menger" },
+    equals:        { label: "הערך שתואם להתראה", example: "haim shafir" },
+    fromEmail:     { label: "כתובת המייל של השולח", example: "name@example.com" },
+    fromEmails:    { label: "כתובות המייל של השולחים (מופרד בפסיק)", example: "a@ex.com, b@ex.com" },
+    to:            { label: 'כתובת מייל לקבלת ההתראה', example: "name@example.com" },
   };
   const base = map[key] || { label: key, example: "" };
   return { key, ...base };
@@ -746,63 +598,38 @@ function computeMissingFromRegistry(proposal) {
       for (const k of spec.required) if (!params[k]) missing.push(humanizeKey(name, k));
     }
   }
-  // unique by key
   const seen = new Set();
-  return missing.filter((m) => (seen.has(m.key) ? false : (seen.add(m.key), true)));
+  return missing.filter(m => (seen.has(m.key) ? false : (seen.add(m.key), true)));
 }
 function buildQuestions(missing) {
-  return (missing || []).map((m) => {
+  return (missing || []).map(m => {
     switch (m.key) {
-      case "spreadsheetId":
-        return "איזה גיליון Google? (אפשר להדביק את כל הקישור)";
-      case "sheetName":
-        return "מה שם הלשונית (Sheet) בגיליון?";
-      case "columnName":
-        return "מה שם העמודה/השדה שעליו בודקים?";
-      case "equals":
-        return "איזה ערך בדיוק צריך לזהות בעמודה הזו?";
-      case "fromEmail":
-        return "ממי מגיעים המיילים (כתובת מייל מלאה)?";
-      case "to":
-        return 'לאיזה יעד לשלוח? (כתובת מייל או מספר וואטסאפ בפורמט בינ"ל)';
-      default:
-        return `חסר ערך עבור ${m.label}`;
+      case "fromEmails":    return "אילו כתובות מייל של שני האנשים? (הפרד בפסיק)";
+      case "spreadsheetId": return "איזה גיליון Google? (אפשר להדביק את כל הקישור)";
+      case "sheetName":     return "מה שם הלשונית (Sheet) בגיליון?";
+      case "columnName":    return "מה שם העמודה/השדה?";
+      case "equals":        return "איזה ערך בדיוק צריך לזהות בעמודה הזו?";
+      case "fromEmail":     return "ממי מגיעים המיילים (כתובת מייל מלאה)?";
+      case "to":            return 'לאיזה יעד לשלוח? (כתובת מייל; לוואטסאפ נבנה פעולה אחרת)';
+      default:              return `חסר ערך עבור ${m.label}`;
     }
   });
 }
-
 async function planFromText(text) {
-  if (["groq", "openai", "ollama"].includes(NLP_PROVIDER)) {
-    try {
-      const llm = await callLLMForPlan(text);
-      const proposal = Array.isArray(llm.proposal) ? llm.proposal : [];
-      // Inject defaults
-      for (const step of proposal) {
-        const spec = step.trigger
-          ? SKILLS.triggers[step.trigger.type]
-          : SKILLS.actions[step.action?.type];
-        if (!spec) continue;
-        const dst = step.trigger ? (step.trigger.params ||= {}) : (step.action.params ||= {});
-        Object.entries(spec.defaults || {}).forEach(([k, v]) => {
-          if (dst[k] === undefined) dst[k] = v;
-        });
-      }
-      const missing = computeMissingFromRegistry(proposal);
-      const questions = buildQuestions(missing);
-      return { ok: true, provider: NLP_PROVIDER, proposal, missing, questions, nlp: llm };
-    } catch (e) {
-      // Fall back to heuristics
-    }
-  }
+  // Heuristics first (יציב, חינמי)
   const h = heuristicsPlan(text);
-  const missing = computeMissingFromRegistry(h.steps).concat(h.missing || []);
-  const seen = new Set();
-  const uniqMissing = missing.filter((m) => (seen.has(m.key) ? false : (seen.add(m.key), true)));
-  const questions = buildQuestions(uniqMissing);
-  return { ok: true, provider: "heuristic", proposal: h.steps, missing: uniqMissing, questions, nlp: null };
+  if (h.steps?.length) {
+    const missing = computeMissingFromRegistry(h.steps).concat(h.missing || []);
+    const seen = new Set();
+    const uniqMissing = missing.filter(m => (seen.has(m.key) ? false : (seen.add(m.key), true)));
+    const questions = buildQuestions(uniqMissing);
+    return { ok: true, provider: "heuristic", proposal: h.steps, missing: uniqMissing, questions, nlp: null };
+  }
+  // (Optional) Try LLM here if תרצה בעתיד
+  return { ok: true, provider: "heuristic", proposal: [], missing: [], questions: [], nlp: null };
 }
 
-// ---------- Plan & Execute endpoints ----------
+// ---------- Plan & Execute ----------
 app.post("/api/plan/from-text", async (req, res) => {
   try {
     const { text } = req.body || {};
@@ -841,6 +668,7 @@ async function runPipeline(steps) {
     if (step.trigger) {
       const { type, params } = step.trigger;
       if (type === "gmail.unreplied") items = await triggerGmailUnreplied(params);
+      else if (type === "gmail.from") items = await triggerGmailFrom(params);   // NEW
       else if (type === "sheets.match") items = await triggerSheetsMatch(params);
       else throw new Error(`Unknown trigger: ${type}`);
     } else if (step.action) {
@@ -874,11 +702,7 @@ async function triggerGmailUnreplied(params) {
   const profile = await gmail.users.getProfile({ userId: "me" });
   const myEmail = profile.data.emailAddress;
   const q = [`from:${fromEmail}`, `newer_than:${newerThanDays}d`, "-in:chats"].join(" ");
-  const list = await gmail.users.messages.list({
-    userId: "me",
-    q,
-    maxResults: Math.min(limit, 100),
-  });
+  const list = await gmail.users.messages.list({ userId: "me", q, maxResults: Math.min(limit, 100) });
   const msgs = list.data.messages || [];
   const thresholdMs = hours * 60 * 60 * 1000;
   const now = Date.now();
@@ -887,9 +711,7 @@ async function triggerGmailUnreplied(params) {
     const th = await gmail.users.threads.get({ userId: "me", id: m.threadId });
     const messages = th.data.messages || [];
     const lastMsg = messages[messages.length - 1];
-    const headers = Object.fromEntries(
-      (lastMsg.payload.headers || []).map((h) => [h.name.toLowerCase(), h.value])
-    );
+    const headers = Object.fromEntries((lastMsg.payload.headers || []).map((h) => [h.name.toLowerCase(), h.value]));
     const from = headers["from"] || "";
     const subject = headers["subject"] || "";
     const internalDate = parseInt(lastMsg.internalDate || "0", 10);
@@ -906,8 +728,80 @@ async function triggerGmailUnreplied(params) {
     const threadId = th.data.id;
     const webLink = `https://mail.google.com/mail/u/0/#inbox/${threadId}`;
     const dateIso = new Date(internalDate).toISOString();
-    out.push({ from, subject, date: dateIso, threadId, webLink });
+    out.push({ from, subject, date: dateIso, threadId, webLink, snippet: lastMsg.snippet || "" });
   }
+  return out;
+}
+
+// ---------- Trigger: gmail.from (NEW) ----------
+function parseAddress(str="") {
+  // returns only email part if present
+  const m = str.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/);
+  return m ? m[0] : str;
+}
+function extractPlainText(payload) {
+  // recursively collect text/plain
+  if (!payload) return "";
+  const mime = payload.mimeType || "";
+  if (mime === "text/plain" && payload.body?.data) {
+    try {
+      const buff = Buffer.from(payload.body.data, "base64");
+      return buff.toString("utf8");
+    } catch { return ""; }
+  }
+  if (payload.parts && Array.isArray(payload.parts)) {
+    for (const p of payload.parts) {
+      const got = extractPlainText(p);
+      if (got) return got;
+    }
+  }
+  return "";
+}
+async function triggerGmailFrom(params) {
+  const { fromEmails, newerThanDays = 30, limit = 100 } = params || {};
+  if (!fromEmails) throw new Error("fromEmails is required (comma-separated)");
+  const gmail = await getGmailClient();
+
+  // build query: (from:a OR from:b) newer_than:Xd -in:chats
+  const addrs = fromEmails.split(",").map(s => s.trim()).filter(Boolean);
+  const qFrom = addrs.map(a => `from:${a}`).join(" OR ");
+  const q = [`(${qFrom})`, `newer_than:${newerThanDays}d`, "-in:chats"].join(" ");
+
+  // KV: avoid duplicates across runs
+  const key = `gmail:from:${addrs.join("|")}`;
+  const lastTs = (await kvGet(key)) || 0;
+
+  const list = await gmail.users.messages.list({ userId: "me", q, maxResults: Math.min(limit, 100) });
+  const msgs = list.data.messages || [];
+  const out = [];
+  let maxTs = lastTs;
+
+  for (const m of msgs) {
+    const full = await gmail.users.messages.get({ userId: "me", id: m.id, format: "full" });
+    const msg = full.data;
+    const headers = Object.fromEntries((msg.payload.headers || []).map(h => [h.name.toLowerCase(), h.value]));
+    const from = headers["from"] || "";
+    const subject = headers["subject"] || "";
+    const internalDate = parseInt(msg.internalDate || "0", 10);
+    if (internalDate <= lastTs) continue; // process only new
+    if (internalDate > maxTs) maxTs = internalDate;
+
+    const threadId = msg.threadId;
+    const webLink = `https://mail.google.com/mail/u/0/#inbox/${threadId}`;
+    const dateIso = new Date(internalDate).toISOString();
+    const body = extractPlainText(msg.payload) || "";
+    out.push({
+      from: parseAddress(from),
+      subject,
+      date: dateIso,
+      snippet: msg.snippet || "",
+      body,
+      threadId,
+      webLink,
+    });
+  }
+
+  if (maxTs > lastTs) await kvSet(key, maxTs);
   return out;
 }
 
@@ -918,7 +812,6 @@ async function triggerSheetsMatch(params) {
   if (!columnName) throw new Error("columnName is required");
   const sheets = await getSheetsClient();
 
-  // Accept full URL or bare ID
   const rawId = spreadsheetId || "";
   const effectiveId = extractSpreadsheetId(rawId) || rawId;
 
