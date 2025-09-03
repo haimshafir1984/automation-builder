@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <title>Wizard Plus — Chat UI</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <!-- Tailwind (כמו בעיצוב המאושר) -->
+  <!-- Tailwind (עיצוב המאושר) -->
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     .fade-in { animation: fadein .4s ease; }
@@ -30,21 +30,21 @@
     .tag { font-size:11px; padding:2px 8px; border-radius:999px; background:#eef2ff; color:#3730a3; }
     .section-title { font-weight:800; color:#111827; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
-    .kbd { border:1px solid #e5e7eb; border-bottom-width:3px; padding:0 6px; border-radius:6px; background:#fff; font-size:12px; }
   </style>
 </head>
 <body class="min-h-screen bg-gray-100 text-gray-100 flex">
-  <!-- Sidebar (עיצוב מאושר; עכשיו דינמי) -->
+  <!-- ==== אפליקציה אחת בלבד! ==== -->
+
+  <!-- Sidebar -->
   <aside class="w-64 bg-white text-gray-800 shadow-lg p-6 hidden md:flex md:flex-col">
     <h2 class="text-xl font-bold mb-4">📂 האוטומציות שלי</h2>
     <div class="mb-3">
       <input id="autos-search" class="w-full chat-input rounded-xl p-2" placeholder="חיפוש לפי שם…" />
     </div>
     <ul id="autos-list" class="space-y-3 overflow-auto" style="max-height: 55vh;">
-      <!-- נטען מהשרת -->
       <li class="p-3 bg-blue-50 text-blue-700 rounded-lg font-medium">טוען…</li>
     </ul>
-    <div class="mt-4 text-xs text-gray-400">גרסה 0.5 · Prototype</div>
+    <div class="mt-4 text-xs text-gray-400">Prototype • 0.5</div>
   </aside>
 
   <!-- Main -->
@@ -88,9 +88,7 @@
     <!-- Suggested automations -->
     <section class="mt-6 card p-6 max-w-4xl">
       <div class="section-title mb-3">אוטומציות מוצעות</div>
-      <div class="flex flex-wrap gap-2" id="suggested">
-        <!-- נבנה דינמית מה-JS -->
-      </div>
+      <div class="flex flex-wrap gap-2" id="suggested"></div>
       <div class="text-xs text-gray-500 mt-2">לחיצה מכניסה טקסט לדוגמה ומתחילה איסוף פרטים חסרים.</div>
     </section>
 
@@ -124,622 +122,130 @@
   </main>
 
   <script>
-/* ====================== Utils & Styling ====================== */
-const API_BASE = ''; // same-origin
-function esc(s=''){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+/* ====================== Utils ====================== */
+const API_BASE = '';
+const esc = (s='')=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 function addBubble(html, who='sys'){
-  const chat = document.getElementById('chat');
-  const wrap = document.createElement('div');
-  wrap.className = 'fade-in flex ' + (who==='user' ? 'justify-end' : 'justify-start');
-  const b = document.createElement('div');
-  b.className = 'bubble rounded-2xl px-4 py-3 max-w-[820px] ' + (who==='user' ? 'user' : '');
-  b.innerHTML = html;
-  wrap.appendChild(b); chat.appendChild(wrap); b.scrollIntoView({behavior:'smooth', block:'end'}); return b;
+  const chat=document.getElementById('chat');
+  const wrap=document.createElement('div'); wrap.className='fade-in flex '+(who==='user'?'justify-end':'justify-start');
+  const b=document.createElement('div'); b.className='bubble rounded-2xl px-4 py-3 max-w-[820px] '+(who==='user'?'user':''); b.innerHTML=html;
+  wrap.appendChild(b); chat.appendChild(wrap); b.scrollIntoView({behavior:'smooth',block:'end'}); return b;
 }
-function addInputBubble(placeholder, type='text', widthClass='w-80'){
-  const chat = document.getElementById('chat');
-  const wrap = document.createElement('div'); wrap.className = 'fade-in flex justify-end';
-  const input = document.createElement('input'); input.type = type; input.placeholder = placeholder || '';
-  input.className = `chat-input rounded-2xl p-3 ${widthClass} shadow outline-none focus:ring-2 focus:ring-blue-300`;
-  wrap.appendChild(input); chat.appendChild(wrap); input.scrollIntoView({behavior:'smooth', block:'end'}); input.focus(); return input;
+function addInputBubble(placeholder,type='text',widthClass='w-96'){
+  const chat=document.getElementById('chat'); const wrap=document.createElement('div'); wrap.className='fade-in flex justify-end';
+  const i=document.createElement('input'); i.type=type; i.placeholder=placeholder||''; i.className=`chat-input rounded-2xl p-3 ${widthClass} shadow outline-none focus:ring-2 focus:ring-blue-300`;
+  wrap.appendChild(i); chat.appendChild(wrap); i.scrollIntoView({behavior:'smooth',block:'end'}); i.focus(); return i;
 }
-function addButtonBubble(label, onClick){
-  const chat = document.getElementById('chat');
-  const wrap = document.createElement('div'); wrap.className = 'fade-in flex justify-start';
-  const btn = document.createElement('button'); btn.className = 'btn rounded-2xl'; btn.textContent = label; btn.onclick = onClick;
-  wrap.appendChild(btn); chat.appendChild(wrap); btn.scrollIntoView({behavior:'smooth', block:'end'}); return btn;
+function addButtonBubble(label,onClick){
+  const chat=document.getElementById('chat'); const wrap=document.createElement('div'); wrap.className='fade-in flex justify-start';
+  const btn=document.createElement('button'); btn.className='btn rounded-2xl'; btn.textContent=label; btn.onclick=onClick;
+  wrap.appendChild(btn); chat.appendChild(wrap); btn.scrollIntoView({behavior:'smooth',block:'end'}); return btn;
 }
 function normalizeHebClient(s=''){
-  return String(s)
-    .replace(/[\u200e\u200f]/g,'').replace(/[“”„״]/g, '"').replace(/[’׳]/g, "'").replace(/[–—]/g, '-')
-    .replace(/ווא?טסאפ|ווטסאפ/gi,'WhatsApp').replace(/גוגל\s*שיט|שיט\b/gi,'Sheet')
+  return String(s).replace(/[\u200e\u200f]/g,'').replace(/[“”„״]/g,'"').replace(/[’׳]/g,"'")
+    .replace(/[–—]/g,'-').replace(/ווא?טסאפ|ווטסאפ/gi,'WhatsApp').replace(/גוגל\s*שיט|שיט\b/gi,'Sheet')
     .replace(/\s+/g,' ').trim().replace(/\bבשם\s+/gi,'');
 }
-const mono = (obj)=> `<pre class="text-xs mt-2"><code>${esc(JSON.stringify(obj, null, 2))}</code></pre>`;
+const mono = (obj)=> `<pre class="text-xs mt-2"><code>${esc(JSON.stringify(obj,null,2))}</code></pre>`;
 
-/* ====================== Local Defaults ====================== */
-function getDefaults(){ try{ return JSON.parse(localStorage.getItem('defaults')||'{}'); } catch{ return {}; } }
+/* ====================== Defaults ====================== */
+function getDefaults(){ try{ return JSON.parse(localStorage.getItem('defaults')||'{}'); }catch{ return {}; } }
 function setDefault(k,v){ const d=getDefaults(); d[k]=v; localStorage.setItem('defaults', JSON.stringify(d)); }
 function getDefault(k){ return getDefaults()[k]||''; }
-function loadDefaultsToPanel(){
-  const a=document.getElementById('def_spreadsheetId'); if(a) a.value = getDefault('spreadsheetId');
-  const b=document.getElementById('def_sheetName'); if(b) b.value = getDefault('sheetName');
-  const c=document.getElementById('def_to'); if(c) c.value = getDefault('to');
-}
-function saveDefaultsFromPanel(){
-  const a=document.getElementById('def_spreadsheetId'); if(a) setDefault('spreadsheetId', a.value.trim());
-  const b=document.getElementById('def_sheetName'); if(b) setDefault('sheetName', b.value.trim());
-  const c=document.getElementById('def_to'); if(c) setDefault('to', c.value.trim());
-  addBubble('✅ ברירות־מחדל נשמרו (מקומית בדפדפן)');
-}
+function loadDefaultsToPanel(){ ['spreadsheetId','sheetName','to'].forEach(k=>{ const el=document.getElementById('def_'+k); if(el) el.value=getDefault(k); }); }
+function saveDefaultsFromPanel(){ ['spreadsheetId','sheetName','to'].forEach(k=>{ const el=document.getElementById('def_'+k); if(el) setDefault(k, (el.value||'').trim()); }); addBubble('✅ ברירות־מחדל נשמרו', 'sys'); }
 
-/* ====================== Google Auth ====================== */
-function setGoogleStatus(connected, email){
-  const s=document.getElementById('g-status'); s.textContent = connected ? 'מחובר' : 'לא מחובר';
-  s.className = 'pill ' + (connected ? 'pill-ok' : 'pill-err');
-  document.getElementById('g-email').textContent = connected && email ? `(${email})` : '';
-}
-async function refreshGoogleAccount(){
-  try{
-    const r=await fetch('/api/google/auth/status'); const j=await r.json();
-    if(j && j.hasRefreshToken){
-      try{ const me = await fetch('/api/google/me').then(x=>x.json()); setGoogleStatus(true, me?.emailAddress||''); }
-      catch{ setGoogleStatus(true,''); }
-    } else setGoogleStatus(false,'');
-  }catch{ setGoogleStatus(false,''); }
-}
-async function connectGoogle(){
-  const r=await fetch('/api/google/oauth/url'); const j=await r.json();
-  if(!j.ok||!j.url){ addBubble('❌ שגיאה ביצירת קישור Google OAuth'); return; }
-  window.open(j.url, 'google_auth', 'width=520,height=640');
-}
-async function disconnectGoogle(){ await fetch('/api/google/logout', {method:'POST'}); refreshGoogleAccount(); }
+/* ====================== Google ====================== */
+function setGoogleStatus(connected,email){ const s=document.getElementById('g-status'); s.textContent=connected?'מחובר':'לא מחובר'; s.className='pill '+(connected?'pill-ok':'pill-err'); document.getElementById('g-email').textContent=connected&&email?`(${email})`:''; }
+async function refreshGoogleAccount(){ try{ const j=await (await fetch('/api/google/auth/status')).json(); if(j?.hasRefreshToken){ try{ const me=await (await fetch('/api/google/me')).json(); setGoogleStatus(true, me?.emailAddress||''); }catch{ setGoogleStatus(true,''); } } else setGoogleStatus(false,''); } catch{ setGoogleStatus(false,''); } }
+async function connectGoogle(){ const j=await (await fetch('/api/google/oauth/url')).json(); if(!j.ok||!j.url){ addBubble('❌ שגיאה ביצירת קישור Google OAuth'); return; } window.open(j.url,'google_auth','width=520,height=640'); }
+async function disconnectGoogle(){ await fetch('/api/google/logout',{method:'POST'}); refreshGoogleAccount(); }
 
-/* ====================== Suggested Automations ====================== */
+/* ====================== Suggested ====================== */
 const SUGGESTED = [
-  {
-    title:'מיילים שלא נענו → WhatsApp', tag:'Gmail→WA',
-    text:'כל מייל מ-name@example.com שלא נענה במשך 10 שעות ב-30 ימים האחרונים — שלח לי הודעת WhatsApp עם הנושא וקישור לשיחה'
-  },
-  {
-    title:'שני שולחים → לוג בגיליון', tag:'Gmail→Sheets',
-    text:'אני רוצה לבנות טבלה משותפת לשני אנשים; כל פעם שאחד מהם שולח מייל—להוסיף שורה עם השולח, התאריך, הנושא, והתוכן'
-  },
-  {
-    title:'תאימות ערך בגיליון → מייל', tag:'Sheets→Email',
-    text:'כשהעמודה "project menger" שווה "haim shafir" בלשונית Sheet1 — שלח לי את כל השורה במייל'
-  }
+  { title:'מיילים שלא נענו → WhatsApp', tag:'Gmail→WA', text:'כל מייל מ-name@example.com שלא נענה במשך 10 שעות ב-30 ימים האחרונים — שלח לי הודעת WhatsApp עם הנושא וקישור לשיחה' },
+  { title:'שני שולחים → לוג בגיליון', tag:'Gmail→Sheets', text:'אני רוצה לבנות טבלה משותפת לשני אנשים; כל פעם שאחד מהם שולח מייל—להוסיף שורה עם השולח, התאריך, הנושא, והתוכן' },
+  { title:'תאימות ערך בגיליון → מייל', tag:'Sheets→Email', text:'כשהעמודה "project menger" שווה "haim shafir" בלשונית Sheet1 — שלח לי את כל השורה במייל' }
 ];
 function renderSuggested(){
-  const wrap = document.getElementById('suggested'); wrap.innerHTML = '';
-  SUGGESTED.forEach(s=>{
-    const chip = document.createElement('div'); chip.className = 'chip';
-    chip.innerHTML = `<span>${esc(s.title)}</span><span class="tag">${esc(s.tag)}</span>`;
-    chip.onclick = ()=>{ document.getElementById('free-text').value = s.text; planFromText(s.text, /*fromSuggested*/true); };
-    wrap.appendChild(chip);
-  });
+  const wrap=document.getElementById('suggested'); wrap.innerHTML='';
+  SUGGESTED.forEach(s=>{ const chip=document.createElement('div'); chip.className='chip'; chip.innerHTML=`<span>${esc(s.title)}</span><span class="tag">${esc(s.tag)}</span>`; chip.onclick=()=>{ document.getElementById('free-text').value=s.text; planFromText(s.text,true); }; wrap.appendChild(chip); });
 }
 
-/* ====================== NLP Plan & Slot-Filling ====================== */
-let lastPlan = null;
-let lastStepsEditable = []; // לבנית Review & Edit
+/* ====================== NLP & Slot-Filling ====================== */
+let lastPlan=null, lastStepsEditable=[];
+function updateProviderTag(p){ document.getElementById('nlp-provider').textContent='NLP: '+(p||'—'); }
+function showPlanBubble(obj){ updateProviderTag(obj?.provider||'—'); addBubble(`Intent: — · Provider: <code>${esc(obj?.provider||'—')}</code>${mono(obj)}`); }
+function renderMissingQuestions(m){ if(!m?.length){ addBubble('אין פרטים חסרים כרגע. אפשר להריץ.', 'sys'); return; } addBubble('צריך להשלים כמה פרטים. אדריך אותך אחד-אחד:', 'sys'); }
 
-function updateProviderTag(p){ document.getElementById('nlp-provider').textContent = 'NLP: ' + (p||'—'); }
-function showPlanBubble(obj){
-  updateProviderTag(obj?.provider||'—');
-  addBubble(`Intent: — · Provider: <code>${esc(obj?.provider||'—')}</code>${mono(obj)}`);
-}
-function renderMissingQuestions(missingArr){
-  if(!missingArr?.length){ addBubble('אין פרטים חסרים כרגע. אפשר להריץ.', 'sys'); return; }
-  addBubble('צריך להשלים כמה פרטים. אדריך אותך אחד-אחד:', 'sys');
-}
-async function planFromText(textRaw, fromSuggested=false){
-  const text = normalizeHebClient(textRaw || document.getElementById('free-text').value || '');
-  if(!text){ addBubble('❌ לא התקבל טקסט'); return; }
+async function planFromText(textRaw){
+  const text=normalizeHebClient(textRaw||document.getElementById('free-text').value||''); if(!text){ addBubble('❌ לא התקבל טקסט'); return; }
   addBubble('🔎 מריץ /api/plan/from-text…','sys');
   try{
-    const r = await fetch('/api/plan/from-text', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ text })});
-    const j = await r.json();
-    lastPlan = j; showPlanBubble(j);
-    if(j?.missing?.length){
-      renderMissingQuestions(j.missing);
-      askMissingFieldsGeneric([...j.missing], j.proposal||[]);
-    } else if (j?.proposal?.length){
-      addBubble('✅ תכנית מוכנה. אפשר להריץ או לפתוח עריכה לפני הרצה.', 'sys');
-      buildReviewEditor(j.proposal); // מכין Review & Edit
-      addButtonBubble('פתח עריכה', ()=>{document.getElementById('review').classList.remove('hidden');});
-      addButtonBubble('הפעל עכשיו', ()=> executeWithPlanAndAnswers({}));
-    } else {
-      addBubble('❌ לא זוהתה כוונה. נסו לציין מקור (Gmail/Sheet) ויעד (Email/WhatsApp).', 'sys');
-    }
-  }catch(e){ addBubble('❌ שגיאה בתכנון','sys'); }
+    const j=await (await fetch('/api/plan/from-text',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})})).json();
+    lastPlan=j; showPlanBubble(j);
+    if(j?.missing?.length){ renderMissingQuestions(j.missing); askMissingFieldsGeneric([...j.missing], j.proposal||[]); }
+    else if(j?.proposal?.length){ addBubble('✅ תכנית מוכנה. אפשר להריץ או לפתוח עריכה לפני הרצה.', 'sys'); buildReviewEditor(j.proposal); addButtonBubble('פתח עריכה',()=>document.getElementById('review').classList.remove('hidden')); addButtonBubble('הפעל עכשיו',()=>executeWithPlanAndAnswers({})); }
+    else { addBubble('❌ לא זוהתה כוונה. נסו לציין מקור (Gmail/Sheet) ויעד (Email/WhatsApp).','sys'); }
+  }catch{ addBubble('❌ שגיאה בתכנון','sys'); }
+}
+async function askMissingFieldsGeneric(missingArr,proposal){
+  if(!missingArr?.length){ buildReviewEditor(proposal); addButtonBubble('פתח עריכה',()=>document.getElementById('review').classList.remove('hidden')); addButtonBubble('הפעל עכשיו',()=>executeWithPlanAndAnswers({})); return; }
+  const next=missingArr.shift(); const q=next.label||next.key||'ערך חסר'; addBubble(esc(q),'sys');
+  const ph=next.example||(next.key==='to'?'name@example.com או 9725xxxxxxx':''); const input=addInputBubble(ph,'text','w-96');
+  const d=getDefault(next.key); if(d) input.value=d;
+  addButtonBubble('המשך', async ()=>{ const val=(input.value||'').trim(); if(!val){ addBubble('❌ ערך חסר','sys'); return; } if(['spreadsheetId','sheetName','to','fromEmail','fromEmails'].includes(next.key)) setDefault(next.key,val); lastPlan._answers ||= {}; lastPlan._answers[next.key]=val; addBubble(esc(val),'user'); await askMissingFieldsGeneric(missingArr,proposal); });
 }
 
-/* Slot-Filling: שאלה-תשובה */
-async function askMissingFieldsGeneric(missingArr, proposal){
-  if(!missingArr?.length){
-    // הכין עריכה
-    buildReviewEditor(proposal);
-    addButtonBubble('פתח עריכה', ()=>{document.getElementById('review').classList.remove('hidden');});
-    addButtonBubble('הפעל עכשיו', ()=> executeWithPlanAndAnswers({}));
-    return;
-  }
-  const next = missingArr.shift();
-  // הצג שאלה
-  const q = next.label || next.key || 'ערך חסר';
-  addBubble(esc(q), 'sys');
-  const ph = next.example || (next.key==='to' ? 'name@example.com או 9725xxxxxxx' : '');
-  const input = addInputBubble(ph || '', 'text', 'w-96');
-  // ברירת־מחדל אם קיימת
-  const d = getDefault(next.key); if(d) input.value = d;
-  addButtonBubble('המשך', async ()=>{
-    const val = (input.value||'').trim();
-    if(!val){ addBubble('❌ ערך חסר','sys'); return; }
-    if(['spreadsheetId','sheetName','to','fromEmail','fromEmails'].includes(next.key)) setDefault(next.key, val);
-    lastPlan._answers ||= {}; lastPlan._answers[next.key] = val;
-    addBubble(esc(val),'user');
-    await askMissingFieldsGeneric(missingArr, proposal);
-  });
-}
-
-/* Review & Edit: בניית טופס עריכה ל-steps */
+/* Review & Edit */
 function buildReviewEditor(steps){
-  const host = document.getElementById('review-steps'); host.innerHTML = ''; document.getElementById('review').classList.remove('hidden');
-  lastStepsEditable = JSON.parse(JSON.stringify(steps||[]));
-  (lastStepsEditable||[]).forEach((s, idx)=>{
-    const isTrig = !!s.trigger; const name = isTrig ? s.trigger.type : s.action.type;
-    const params = isTrig ? (s.trigger.params||{}) : (s.action.params||{});
-    const card = document.createElement('div'); card.className='border rounded-xl p-4';
-    let html = `<div class="font-bold mb-2">${isTrig?'Trigger':'Action'}: <span class="mono">${esc(name)}</span></div>`;
-    html += `<div class="grid md:grid-cols-2 gap-3">`;
-    Object.keys(params).forEach(k=>{
-      const v = params[k];
-      html += `
-        <label class="text-sm">
-          <div class="text-gray-600 mb-1">${esc(k)}</div>
-          <input data-idx="${idx}" data-kind="${isTrig?'trigger':'action'}" data-key="${esc(k)}"
-                 class="chat-input w-full rounded-lg p-2" value="${esc(String(v))}" />
-        </label>`;
-    });
-    html += `</div>`;
-    card.innerHTML = html;
-    host.appendChild(card);
+  const host=document.getElementById('review-steps'); host.innerHTML=''; document.getElementById('review').classList.remove('hidden');
+  lastStepsEditable=JSON.parse(JSON.stringify(steps||[]));
+  (lastStepsEditable||[]).forEach((s,idx)=>{
+    const isTrig=!!s.trigger; const name=isTrig?s.trigger.type:s.action.type; const params=isTrig?(s.trigger.params||{}):(s.action.params||{});
+    const card=document.createElement('div'); card.className='border rounded-xl p-4';
+    let html=`<div class="font-bold mb-2">${isTrig?'Trigger':'Action'}: <span class="mono">${esc(name)}</span></div><div class="grid md:grid-cols-2 gap-3">`;
+    Object.keys(params).forEach(k=>{ const v=params[k]; html+=`<label class="text-sm"><div class="text-gray-600 mb-1">${esc(k)}</div><input data-idx="${idx}" data-kind="${isTrig?'trigger':'action'}" data-key="${esc(k)}" class="chat-input w-full rounded-lg p-2" value="${esc(String(v))}" /></label>`; });
+    html+='</div>'; card.innerHTML=html; host.appendChild(card);
   });
 }
 function collectReviewedSteps(){
-  const inputs = document.querySelectorAll('#review-steps input[data-key]');
-  inputs.forEach(el=>{
-    const idx=+el.dataset.idx, kind=el.dataset.kind, key=el.dataset.key, val=el.value;
-    if(kind==='trigger'){ lastStepsEditable[idx].trigger.params[key] = val; }
-    else { lastStepsEditable[idx].action.params[key] = val; }
-  });
+  document.querySelectorAll('#review-steps input[data-key]').forEach(el=>{ const idx=+el.dataset.idx, kind=el.dataset.kind, key=el.dataset.key, val=el.value; if(kind==='trigger') lastStepsEditable[idx].trigger.params[key]=val; else lastStepsEditable[idx].action.params[key]=val; });
   return lastStepsEditable;
 }
-
-/* Apply answers (from slot-filling) into steps */
-function applyAnswersToSteps(steps, answers){
-  const patch = (o)=>{ if(!o||typeof o!=='object')return; for(const k of Object.keys(o)){ if(o[k]==='' && answers[k]) o[k]=answers[k]; if(typeof o[k]==='object') patch(o[k]); } };
+function applyAnswersToSteps(steps,answers){
+  const patch=o=>{ if(!o||typeof o!=='object') return; for(const k of Object.keys(o)){ if(o[k]===''&&answers[k]) o[k]=answers[k]; if(typeof o[k]==='object') patch(o[k]); } };
   (steps||[]).forEach(s=>{ if(s.trigger) patch(s.trigger.params); if(s.action) patch(s.action.params); });
   return steps;
 }
 
 /* Execute */
-async function executeWithPlanAndAnswers(extraAnswers, reviewed=false){
+async function executeWithPlanAndAnswers(extraAnswers,reviewed=false){
   if(!lastPlan){ addBubble('❌ אין תכנית פעילה','sys'); return; }
-  let steps = reviewed ? collectReviewedSteps() : JSON.parse(JSON.stringify(lastPlan.proposal||[]));
-  const answers = Object.assign({}, lastPlan._answers||{}, extraAnswers||{});
-  steps = applyAnswersToSteps(steps, answers);
-  const dry = document.getElementById('chk-dry')?.checked || false;
+  let steps=reviewed?collectReviewedSteps():JSON.parse(JSON.stringify(lastPlan.proposal||[]));
+  const answers=Object.assign({}, lastPlan._answers||{}, extraAnswers||{}); steps=applyAnswersToSteps(steps,answers);
+  const dry=document.getElementById('chk-dry')?.checked||false;
   addBubble(`⚙️ מריץ /api/automations/execute${dry?' (Dry-Run)':''}…`,'sys');
   try{
-    const r = await fetch('/api/automations/execute', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ text: document.getElementById('free-text').value||'', steps, dryRun: dry })
-    });
-    const j = await r.json();
-    if(j.ok){
-      addBubble('✅ הצלחה' + mono(j),'sys');
-    }else{
-      addBubble('❌ שגיאה בהרצה' + mono(j),'sys');
-    }
-  }catch(e){ addBubble('❌ שגיאה בהרצה','sys'); }
+    const j=await (await fetch('/api/automations/execute',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ text:document.getElementById('free-text').value||'', steps, dryRun:dry })})).json();
+    addBubble((j.ok?'✅ הצלחה':'❌ שגיאה')+mono(j),'sys');
+  }catch{ addBubble('❌ שגיאה בהרצה','sys'); }
 }
 
-/* Save automation */
+/* Save automation & Sidebar */
 async function saveAutomation(){
   if(!lastPlan){ addBubble('❌ אין תכנית פעילה','sys'); return; }
-  const titleInput = addInputBubble('שם לאוטומציה (למשל: SLA לוואטסאפ)','text','w-96');
-  addButtonBubble('שמור', async ()=>{
-    const title = (titleInput.value||'').trim() || 'אוטומציה ללא שם';
-    const steps = collectReviewedSteps(); // נשמור עם העריכות
-    try{
-      const r = await fetch('/api/automations/save', { method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ steps, text: document.getElementById('free-text').value||'', title }) });
-      const j = await r.json();
-      if(j.ok){ addBubble(`✅ נשמר (id: <span class="mono">${esc(j.id)}</span>)`,'sys'); loadMyAutomations(); }
-      else { addBubble('❌ שמירה נכשלה' + mono(j),'sys'); }
-    }catch(e){ addBubble('❌ שמירה נכשלה','sys'); }
+  const titleInput=addInputBubble('שם לאוטומציה (למשל: SLA לוואטסאפ)','text','w-96');
+  addButtonBubble('שמור', async ()=>{ const title=(titleInput.value||'').trim()||'אוטומציה ללא שם'; const steps=collectReviewedSteps();
+    const j=await (await fetch('/api/automations/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ steps, text:document.getElementById('free-text').value||'', title })})).json();
+    if(j.ok){ addBubble(`✅ נשמר (id: <span class="mono">${esc(j.id)}</span>)`,'sys'); loadMyAutomations(); } else addBubble('❌ שמירה נכשלה'+mono(j),'sys');
   });
 }
-
-/* My Automations (sidebar) */
-async function loadMyAutomations(){
-  const ul = document.getElementById('autos-list'); ul.innerHTML = '<li class="p-3 rounded-lg border">טוען…</li>';
-  try{
-    const r = await fetch('/api/automations/list'); const j = await r.json();
-    if(!j.ok){ ul.innerHTML = '<li class="p-3 rounded-lg border text-red-600">שגיאה בטעינה</li>'; return; }
-    const items = j.items||[];
-    renderAutos(items);
-  }catch{ ul.innerHTML = '<li class="p-3 rounded-lg border text-red-600">שגיאה בטעינה</li>'; }
-}
+async function loadMyAutomations(){ const ul=document.getElementById('autos-list'); ul.innerHTML='<li class="p-3 rounded-lg border">טוען…</li>';
+  try{ const j=await (await fetch('/api/automations/list')).json(); if(!j.ok){ ul.innerHTML='<li class="p-3 rounded-lg border text-red-600">שגיאה בטעינה</li>'; return; } renderAutos(j.items||[]); }
+  catch{ ul.innerHTML='<li class="p-3 rounded-lg border text-red-600">שגיאה בטעינה</li>'; } }
 function renderAutos(items){
-  const ul = document.getElementById('autos-list'); ul.innerHTML = '';
-  const q = (document.getElementById('autos-search')?.value||'').trim().toLowerCase();
-  items.filter(x=>!q || (x.title||'').toLowerCase().includes(q)).forEach(x=>{
-    const li = document.createElement('li'); li.className = 'p-3 rounded-lg border';
-    li.innerHTML = `
-      <div class="font-semibold">${esc(x.title||'ללא שם')}</div>
-      <div class="text-xs text-gray-500 mono mt-1">${esc(x.id||'')}</div>
-      <div class="mt-2 flex gap-2">
-        <button class="btn-ghost" data-act="run" data-id="${esc(x.id)}">הרץ</button>
-        <button class="btn-ghost" data-act="del" data-id="${esc(x.id)}">מחק</button>
-      </div>
-    `;
-    ul.appendChild(li);
-  });
-  if(!ul.children.length){
-    ul.innerHTML = '<li class="p-3 rounded-lg border text-gray-500">אין אוטומציות שמורות</li>';
-  }
-}
-document.getElementById('autos-list').addEventListener('click', async (e)=>{
-  const btn = e.target.closest('button[data-act]'); if(!btn) return;
-  const id = btn.dataset.id, act = btn.dataset.act;
-  if(act==='run'){
-    addBubble(`▶️ מריץ אוטומציה שמורה (${esc(id)})…`,'sys');
-    try{
-      const r = await fetch('/api/automations/execute-saved', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id }) });
-      const j = await r.json();
-      addBubble((j.ok?'✅':'❌') + ' תוצאה: ' + mono(j),'sys');
-    }catch{ addBubble('❌ שגיאה בהרצה','sys'); }
-  } else if (act==='del'){
-    if(!confirm('למחוק את האוטומציה?')) return;
-    try{
-      await fetch('/api/automations/'+encodeURIComponent(id), { method:'DELETE' });
-      loadMyAutomations();
-    }catch{}
-  }
-});
-document.getElementById('autos-search').addEventListener('input', loadMyAutomations);
-
-/* Bindings */
-document.getElementById('btn-g-connect').addEventListener('click', connectGoogle);
-document.getElementById('btn-g-disconnect').addEventListener('click', disconnectGoogle);
-document.getElementById('btn-debug-nlp').addEventListener('click', ()=> planFromText());
-document.getElementById('btn-create').addEventListener('click', ()=> planFromText());
-document.getElementById('btn-save-defaults').addEventListener('click', saveDefaultsFromPanel);
-document.getElementById('btn-run-reviewed').addEventListener('click', ()=> executeWithPlanAndAnswers({}, /*reviewed*/true));
-document.getElementById('btn-save-automation').addEventListener('click', saveAutomation);
-
-/* Init */
-(function init(){
-  refreshGoogleAccount();
-  loadDefaultsToPanel();
-  renderSuggested();
-  loadMyAutomations();
-  if(location.hash.includes('connected=1')){ addBubble('🔐 התחברת ל-Google','sys'); location.hash=''; }
-})();
-  </script>
-</body>
-</html>
-<!doctype html>
-<html lang="he" dir="rtl">
-<head>
-  <meta charset="utf-8" />
-  <title>Wizard Plus — Chat UI</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    .fade-in { animation: fadein .4s ease; }
-    @keyframes fadein { from {opacity:0; transform: translateY(6px)} to {opacity:1; transform:none} }
-    .bubble{ background:#0b1323; border:1px solid #273244; color:#e5e7eb; }
-    .bubble.user{ background:#121a2b; }
-    .btn {
-      appearance:none; border:none; border-radius:12px; padding:12px 16px;
-      background:linear-gradient(135deg,#6366f1,#8b5cf6); color:#fff;
-      box-shadow: 0 10px 18px rgba(0,0,0,0.15), inset 0 -3px 0 rgba(0,0,0,.15);
-      cursor:pointer; font-weight:700;
-    }
-    .btn:hover{ filter:brightness(0.97) }
-    .btn-ghost{ background:transparent; color:#374151; border:1px solid #e5e7eb }
-    .pill{ display:inline-flex; gap:8px; align-items:center; padding:6px 10px; border-radius:999px; font-weight:600; font-size:12px; border:1px solid #37415133 }
-    .pill-ok{background:rgba(16,185,129,.12);border-color:rgba(16,185,129,.3); color:#0bb37b;}
-    .pill-err{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.35); color:#ef4444;}
-    /* תשובות/אינפוטים בבועות – רקע לבן וטקסט כהה כדי שלא "ייעלם" */
-    .chat-input { background:#ffffff; color:#111827; border:1px solid #e5e7eb; }
-    code { background:#0b1220; padding:2px 6px; border-radius:6px; border:1px solid #1f2937; }
-  </style>
-</head>
-<body class="min-h-screen bg-gray-100 text-gray-100 flex">
-  <!-- Sidebar -->
-  <aside class="w-64 bg-white text-gray-800 shadow-lg p-6 hidden md:block">
-    <h2 class="text-xl font-bold mb-6">📂 האוטומציות שלי</h2>
-    <ul class="space-y-3">
-      <li class="p-3 bg-blue-100 text-blue-700 rounded-lg font-medium">אוטומציה חדשה</li>
-      <li class="p-3 hover:bg-gray-100 rounded-lg cursor-pointer">SLA מיילים</li>
-      <li class="p-3 hover:bg-gray-100 rounded-lg cursor-pointer">סיכום יומי</li>
-      <li class="p-3 hover:bg-gray-100 rounded-lg cursor-pointer">תבניות WhatsApp</li>
-    </ul>
-    <div class="mt-8">
-      <p class="text-xs text-gray-400">גרסה 0.4 · Prototype</p>
-    </div>
-  </aside>
-
-  <!-- Main -->
-  <main class="flex-1 p-6 md:p-10">
-    <!-- Header -->
-    <header class="flex items-center justify-between mb-6">
-      <h1 class="text-2xl font-bold text-gray-800">✨ צור אוטומציה חדשה</h1>
-      <div class="flex items-center gap-3">
-        <span id="g-status" class="pill">טוען…</span>
-        <span id="g-email" class="text-sm text-gray-500"></span>
-        <button id="btn-g-connect" class="px-4 py-2 btn">🔑 התחבר עם Google</button>
-        <button id="btn-g-disconnect" class="px-4 py-2 btn-ghost rounded-lg">התנתק</button>
-      </div>
-    </header>
-
-    <!-- Composer -->
-    <section class="bg-white text-gray-800 shadow-lg rounded-2xl p-8 max-w-3xl">
-      <label class="block text-sm text-gray-600 mb-2">תאר מה אתה צריך:</label>
-      <textarea id="free-text"
-        class="w-full h-40 border rounded-xl p-4 outline-none focus:ring-2 focus:ring-blue-300 mb-6"
-        placeholder='דוגמה: "כל מייל שהגיע ממשתמש מסוים בחודש האחרון ושלא עניתי לו ב-5 שעות — תכניס לגוגל שיט / שלח לי בוואטסאפ"'></textarea>
-      <div class="flex gap-3">
-        <button id="btn-create" class="btn">🚀 צור אוטומציה</button>
-        <button id="btn-debug-nlp" class="btn-ghost px-4 py-2 rounded-xl">בדיקת NLP</button>
-      </div>
-    </section>
-
-    <!-- Chat Section -->
-    <section class="mt-8">
-      <div id="chat" class="space-y-3"></div>
-    </section>
-
-    <!-- Quick defaults (שמורות בדפדפן שלך; לא משנה עיצוב קיים) -->
-    <section class="mt-8 bg-white text-gray-800 shadow rounded-2xl p-4">
-      <div class="text-sm text-gray-700 mb-2">ברירות־מחדל (שמורות מקומית ב־localStorage)</div>
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <input id="def_spreadsheetId" class="chat-input rounded-xl p-2" placeholder="Spreadsheet ID או URL מלא">
-        <input id="def_sheetName" class="chat-input rounded-xl p-2" placeholder="Sheet name (לשונית)">
-        <input id="def_to" class="chat-input rounded-xl p-2" placeholder="יעד: name@example.com או 9725xxxxxxx">
-      </div>
-      <div class="mt-2">
-        <button id="btn-save-defaults" class="btn-ghost px-3 py-1 rounded-lg">שמור ברירות־מחדל</button>
-      </div>
-    </section>
-  </main>
-
-  <script>
-// -------- Config (same-origin) --------
-const API_BASE = '';
-
-// -------- UI Helpers (reuse existing classes) --------
-function addBubble(text, who='sys') {
-  const chat = document.getElementById('chat');
-  const wrap = document.createElement('div');
-  wrap.className = 'fade-in flex ' + (who==='user' ? 'justify-end' : 'justify-start');
-  const b = document.createElement('div');
-  b.className = 'bubble rounded-2xl px-4 py-3 max-w-[80%] ' + (who==='user' ? 'user' : '');
-  b.innerHTML = text;
-  wrap.appendChild(b);
-  chat.appendChild(wrap);
-  b.scrollIntoView({ behavior:'smooth', block:'end' });
-  return b;
-}
-function addInputBubble(placeholder, type='text', widthClass='w-72') {
-  const chat = document.getElementById('chat');
-  const wrap = document.createElement('div');
-  wrap.className = 'fade-in flex justify-end';
-  const input = document.createElement('input');
-  input.type = type;
-  input.placeholder = placeholder || '';
-  input.className = `chat-input rounded-2xl p-3 ${widthClass} shadow outline-none focus:ring-2 focus:ring-blue-300`;
-  wrap.appendChild(input);
-  chat.appendChild(wrap);
-  input.scrollIntoView({ behavior:'smooth', block:'end' });
-  input.focus();
-  return input;
-}
-function addButtonBubble(label, onClick) {
-  const chat = document.getElementById('chat');
-  const wrap = document.createElement('div');
-  wrap.className = 'fade-in flex justify-start';
-  const btn = document.createElement('button');
-  btn.className = 'btn rounded-2xl';
-  btn.textContent = label;
-  btn.onclick = onClick;
-  wrap.appendChild(btn);
-  chat.appendChild(wrap);
-  btn.scrollIntoView({ behavior:'smooth', block:'end' });
-  return btn;
-}
-function setGoogleStatus(connected, email) {
-  const s = document.getElementById('g-status');
-  s.textContent = connected ? 'מחובר' : 'לא מחובר';
-  s.className = 'pill ' + (connected ? 'pill-ok' : 'pill-err');
-  document.getElementById('g-email').textContent = connected && email ? `(${email})` : '';
-}
-
-// -------- Small utils --------
-function normalizeHebClient(s=''){
-  return String(s)
-    .replace(/[\u200e\u200f]/g,'')
-    .replace(/[“”„״]/g, '"')
-    .replace(/[’׳]/g, "'")
-    .replace(/[–—]/g, '-')
-    .replace(/ווא?טסאפ|ווטסאפ/gi, 'WhatsApp')
-    .replace(/גוגל\s*שיט|שיט\b/gi, 'Sheet')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/\bבשם\s+/gi, '');
-}
-
-// Defaults in localStorage
-function getDefaults(){ try { return JSON.parse(localStorage.getItem('defaults')||'{}'); } catch { return {}; } }
-function setDefault(k,v){ const d=getDefaults(); d[k]=v; localStorage.setItem('defaults', JSON.stringify(d)); }
-function getDefault(k){ return getDefaults()[k]||''; }
-
-// Prefill defaults panel if present
-function loadDefaultsToPanel(){
-  const a = document.getElementById('def_spreadsheetId'); if (a) a.value = getDefault('spreadsheetId');
-  const b = document.getElementById('def_sheetName'); if (b) b.value = getDefault('sheetName');
-  const c = document.getElementById('def_to'); if (c) c.value = getDefault('to');
-}
-function saveDefaultsFromPanel(){
-  const a = document.getElementById('def_spreadsheetId'); if (a) setDefault('spreadsheetId', a.value.trim());
-  const b = document.getElementById('def_sheetName'); if (b) setDefault('sheetName', b.value.trim());
-  const c = document.getElementById('def_to'); if (c) setDefault('to', c.value.trim());
-}
-
-// -------- Google auth via our backend --------
-async function refreshGoogleAccount() {
-  try {
-    const r = await fetch('/api/google/auth/status');
-    const j = await r.json();
-    if (j && j.hasRefreshToken) {
-      try {
-        const me = await fetch('/api/google/me').then(x=>x.json());
-        setGoogleStatus(true, me && me.email ? me.email : '');
-      } catch { setGoogleStatus(true, ''); }
-    } else {
-      setGoogleStatus(false, '');
-    }
-  } catch { setGoogleStatus(false, ''); }
-}
-async function connectGoogle() {
-  const r = await fetch('/api/google/oauth/url');
-  const j = await r.json();
-  if (!j.ok || !j.url) { addBubble('❌ שגיאה ביצירת קישור Google OAuth'); return; }
-  window.open(j.url, 'google_auth', 'width=520,height=640');
-}
-async function disconnectGoogle() {
-  await fetch('/api/google/logout', { method:'POST' });
-  refreshGoogleAccount();
-}
-
-// -------- NLP Plan with Groq/Heuristic backend --------
-let lastPlan = null;
-
-function showPlanBubble(obj){
-  const pretty = `<pre class="text-xs mt-2"><code>${JSON.stringify(obj, null, 2).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</code></pre>`;
-  addBubble(`Intent: — · Provider: <code>${obj.provider || '—'}</code>${pretty}`);
-}
-
-async function planFromText(textRaw){
-  const text = normalizeHebClient(textRaw || document.getElementById('free-text').value || '');
-  if (!text) { addBubble('❌ לא התקבל טקסט'); return; }
-  addBubble('🔎 מריץ /api/plan/from-text…');
-  try{
-    const r = await fetch('/api/plan/from-text', {
-      method:'POST',
-      headers:{ 'Content-Type':'application/json' },
-      body: JSON.stringify({ text })
-    });
-    const j = await r.json();
-    lastPlan = j;
-    showPlanBubble(j);
-    if (j && Array.isArray(j.missing) && j.missing.length){
-      askMissingFieldsGeneric([...j.missing], j.proposal || []);
-    } else if (j && j.proposal && j.proposal.length){
-      addButtonBubble('הפעל עכשיו', async ()=>{ await executeWithPlanAndAnswers({}); });
-    } else {
-      addBubble('❌ לא זוהתה כוונה. נסו לנסח עם המקור (Gmail/Sheet) והיעד (Email/WhatsApp).');
-    }
-  }catch(e){
-    addBubble('❌ שגיאה בתכנון');
-  }
-}
-
-// Generic missing-fields flow based on array of {key,label,example}
-async function askMissingFieldsGeneric(missingArr, proposal){
-  if (!missingArr || !missingArr.length){
-    addButtonBubble('הפעל עכשיו', async ()=>{ await executeWithPlanAndAnswers({}); });
-    return;
-  }
-  const next = missingArr.shift();
-  const question = next.label || next.key || 'ערך חסר';
-  addBubble(question, 'sys');
-  const ph = next.example || '';
-  const input = addInputBubble(ph || '', 'text', 'w-80');
-  addButtonBubble('המשך', async ()=>{
-    const val = (input.value||'').trim();
-    if (!val){ addBubble('❌ ערך חסר'); return; }
-    if (['spreadsheetId','sheetName','to','fromEmail'].includes(next.key)) setDefault(next.key, val);
-    if (lastPlan){
-      lastPlan._answers = lastPlan._answers || {};
-      lastPlan._answers[next.key] = val;
-    }
-    addBubble(val, 'user');
-    await askMissingFieldsGeneric(missingArr, proposal);
-  });
-}
-
-// Patch answers into steps (proposal)
-function applyAnswersToSteps(steps, answers){
-  const patch = (obj)=>{
-    if (!obj || typeof obj!=='object') return;
-    for (const k of Object.keys(obj)){
-      if (obj[k]==='' && answers[k]) obj[k] = answers[k];
-      if (typeof obj[k]==='object') patch(obj[k]);
-    }
-  };
-  for (const s of (steps||[])){
-    if (s.trigger && s.trigger.params) patch(s.trigger.params);
-    if (s.action && s.action.params) patch(s.action.params);
-  }
-  return steps;
-}
-
-// Execute via our backend
-async function executeWithPlanAndAnswers(extraAnswers){
-  if (!lastPlan || !Array.isArray(lastPlan.proposal) || !lastPlan.proposal.length){
-    addBubble('❌ אין תכנית פעילה להרצה');
-    return;
-  }
-  const answers = Object.assign({}, lastPlan._answers || {}, extraAnswers || {});
-  const steps = applyAnswersToSteps(JSON.parse(JSON.stringify(lastPlan.proposal)), answers);
-  addBubble('⚙️ מריץ /api/automations/execute…');
-  try{
-    const r = await fetch('/api/automations/execute', {
-      method:'POST',
-      headers:{ 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: document.getElementById('free-text').value || '', steps })
-    });
-    const j = await r.json();
-    const pretty = `<pre class="text-xs mt-2"><code>${JSON.stringify(j, null, 2).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</code></pre>`;
-    if (j.ok){
-      addBubble('✅ בוצע בהצלחה' + pretty);
-    } else {
-      addBubble('❌ שגיאה בהרצה' + pretty);
-    }
-  }catch(e){
-    addBubble('❌ שגיאה בהרצה');
-  }
-}
-
-// Bindings
-document.getElementById('btn-g-connect').addEventListener('click', connectGoogle);
-document.getElementById('btn-g-disconnect').addEventListener('click', disconnectGoogle);
-document.getElementById('btn-debug-nlp').addEventListener('click', ()=> planFromText());
-document.getElementById('btn-create').addEventListener('click', ()=> planFromText());
-document.getElementById('btn-save-defaults').addEventListener('click', ()=> {
-  saveDefaultsFromPanel();
-  addBubble('✅ ברירות־מחדל נשמרו (מקומית בדפדפן)');
-});
-
-// init
-refreshGoogleAccount();
-loadDefaultsToPanel();
-  </script>
-</body>
-</html>
+  const ul=document.getElementById('autos-list'); ul.innerHTML=''; const q=(document.getElementById('autos-search')?.value||'').trim().toLowerCase();
+  items.filter(x=>!q||(x.title||'').toLowerCase().includes(q)).forEach(x=>{
+    const li=document.createElement('li'); li.className='p-3 rounded-lg border';
+    li.innerHTML=`<div class="font-semibold
