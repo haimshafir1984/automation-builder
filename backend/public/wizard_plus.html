@@ -33,7 +33,7 @@
   </style>
 </head>
 <body class="min-h-screen bg-gray-100 text-gray-100 flex">
-  <!-- ==== אפליקציה אחת בלבד! ==== -->
+  <!-- ==== אפליקציה אחת בלבד ==== -->
 
   <!-- Sidebar -->
   <aside class="w-64 bg-white text-gray-800 shadow-lg p-6 hidden md:flex md:flex-col">
@@ -157,8 +157,22 @@ function saveDefaultsFromPanel(){ ['spreadsheetId','sheetName','to'].forEach(k=>
 
 /* ====================== Google ====================== */
 function setGoogleStatus(connected,email){ const s=document.getElementById('g-status'); s.textContent=connected?'מחובר':'לא מחובר'; s.className='pill '+(connected?'pill-ok':'pill-err'); document.getElementById('g-email').textContent=connected&&email?`(${email})`:''; }
-async function refreshGoogleAccount(){ try{ const j=await (await fetch('/api/google/auth/status')).json(); if(j?.hasRefreshToken){ try{ const me=await (await fetch('/api/google/me')).json(); setGoogleStatus(true, me?.emailAddress||''); }catch{ setGoogleStatus(true,''); } } else setGoogleStatus(false,''); } catch{ setGoogleStatus(false,''); } }
-async function connectGoogle(){ const j=await (await fetch('/api/google/oauth/url')).json(); if(!j.ok||!j.url){ addBubble('❌ שגיאה ביצירת קישור Google OAuth'); return; } window.open(j.url,'google_auth','width=520,height=640'); }
+async function refreshGoogleAccount(){
+  try{
+    const r = await fetch('/api/google/auth/status'); const j = await r.json();
+    if(j?.hasRefreshToken){
+      try{ const me = await (await fetch('/api/google/me')).json(); setGoogleStatus(true, me?.emailAddress||''); }
+      catch{ setGoogleStatus(true,''); }
+    } else setGoogleStatus(false,'');
+  } catch{ setGoogleStatus(false,''); }
+}
+async function connectGoogle(){
+  try{
+    const j=await (await fetch('/api/google/oauth/url')).json();
+    if(!j.ok||!j.url){ addBubble('❌ שגיאה ביצירת קישור Google OAuth'); return; }
+    window.open(j.url,'google_auth','width=520,height=640');
+  }catch{ addBubble('❌ שגיאה בחיבור ל-Google','sys'); }
+}
 async function disconnectGoogle(){ await fetch('/api/google/logout',{method:'POST'}); refreshGoogleAccount(); }
 
 /* ====================== Suggested ====================== */
@@ -169,7 +183,12 @@ const SUGGESTED = [
 ];
 function renderSuggested(){
   const wrap=document.getElementById('suggested'); wrap.innerHTML='';
-  SUGGESTED.forEach(s=>{ const chip=document.createElement('div'); chip.className='chip'; chip.innerHTML=`<span>${esc(s.title)}</span><span class="tag">${esc(s.tag)}</span>`; chip.onclick=()=>{ document.getElementById('free-text').value=s.text; planFromText(s.text,true); }; wrap.appendChild(chip); });
+  SUGGESTED.forEach(s=>{
+    const chip=document.createElement('div'); chip.className='chip';
+    chip.innerHTML=`<span>${esc(s.title)}</span><span class="tag">${esc(s.tag)}</span>`;
+    chip.onclick=()=>{ document.getElementById('free-text').value=s.text; planFromText(s.text,true); };
+    wrap.appendChild(chip);
+  });
 }
 
 /* ====================== NLP & Slot-Filling ====================== */
@@ -190,11 +209,21 @@ async function planFromText(textRaw){
   }catch{ addBubble('❌ שגיאה בתכנון','sys'); }
 }
 async function askMissingFieldsGeneric(missingArr,proposal){
-  if(!missingArr?.length){ buildReviewEditor(proposal); addButtonBubble('פתח עריכה',()=>document.getElementById('review').classList.remove('hidden')); addButtonBubble('הפעל עכשיו',()=>executeWithPlanAndAnswers({})); return; }
+  if(!missingArr?.length){
+    buildReviewEditor(proposal);
+    addButtonBubble('פתח עריכה',()=>document.getElementById('review').classList.remove('hidden'));
+    addButtonBubble('הפעל עכשיו',()=>executeWithPlanAndAnswers({}));
+    return;
+  }
   const next=missingArr.shift(); const q=next.label||next.key||'ערך חסר'; addBubble(esc(q),'sys');
   const ph=next.example||(next.key==='to'?'name@example.com או 9725xxxxxxx':''); const input=addInputBubble(ph,'text','w-96');
   const d=getDefault(next.key); if(d) input.value=d;
-  addButtonBubble('המשך', async ()=>{ const val=(input.value||'').trim(); if(!val){ addBubble('❌ ערך חסר','sys'); return; } if(['spreadsheetId','sheetName','to','fromEmail','fromEmails'].includes(next.key)) setDefault(next.key,val); lastPlan._answers ||= {}; lastPlan._answers[next.key]=val; addBubble(esc(val),'user'); await askMissingFieldsGeneric(missingArr,proposal); });
+  addButtonBubble('המשך', async ()=>{
+    const val=(input.value||'').trim(); if(!val){ addBubble('❌ ערך חסר','sys'); return; }
+    if(['spreadsheetId','sheetName','to','fromEmail','fromEmails'].includes(next.key)) setDefault(next.key,val);
+    lastPlan._answers ||= {}; lastPlan._answers[next.key]=val; addBubble(esc(val),'user');
+    await askMissingFieldsGeneric(missingArr,proposal);
+  });
 }
 
 /* Review & Edit */
@@ -205,12 +234,19 @@ function buildReviewEditor(steps){
     const isTrig=!!s.trigger; const name=isTrig?s.trigger.type:s.action.type; const params=isTrig?(s.trigger.params||{}):(s.action.params||{});
     const card=document.createElement('div'); card.className='border rounded-xl p-4';
     let html=`<div class="font-bold mb-2">${isTrig?'Trigger':'Action'}: <span class="mono">${esc(name)}</span></div><div class="grid md:grid-cols-2 gap-3">`;
-    Object.keys(params).forEach(k=>{ const v=params[k]; html+=`<label class="text-sm"><div class="text-gray-600 mb-1">${esc(k)}</div><input data-idx="${idx}" data-kind="${isTrig?'trigger':'action'}" data-key="${esc(k)}" class="chat-input w-full rounded-lg p-2" value="${esc(String(v))}" /></label>`; });
+    Object.keys(params).forEach(k=>{
+      const v=params[k];
+      html+=`<label class="text-sm"><div class="text-gray-600 mb-1">${esc(k)}</div><input data-idx="${idx}" data-kind="${isTrig?'trigger':'action'}" data-key="${esc(k)}" class="chat-input w-full rounded-lg p-2" value="${esc(String(v))}" /></label>`;
+    });
     html+='</div>'; card.innerHTML=html; host.appendChild(card);
   });
 }
 function collectReviewedSteps(){
-  document.querySelectorAll('#review-steps input[data-key]').forEach(el=>{ const idx=+el.dataset.idx, kind=el.dataset.kind, key=el.dataset.key, val=el.value; if(kind==='trigger') lastStepsEditable[idx].trigger.params[key]=val; else lastStepsEditable[idx].action.params[key]=val; });
+  document.querySelectorAll('#review-steps input[data-key]').forEach(el=>{
+    const idx=+el.dataset.idx, kind=el.dataset.kind, key=el.dataset.key, val=el.value;
+    if(kind==='trigger') lastStepsEditable[idx].trigger.params[key]=val;
+    else lastStepsEditable[idx].action.params[key]=val;
+  });
   return lastStepsEditable;
 }
 function applyAnswersToSteps(steps,answers){
@@ -236,16 +272,78 @@ async function executeWithPlanAndAnswers(extraAnswers,reviewed=false){
 async function saveAutomation(){
   if(!lastPlan){ addBubble('❌ אין תכנית פעילה','sys'); return; }
   const titleInput=addInputBubble('שם לאוטומציה (למשל: SLA לוואטסאפ)','text','w-96');
-  addButtonBubble('שמור', async ()=>{ const title=(titleInput.value||'').trim()||'אוטומציה ללא שם'; const steps=collectReviewedSteps();
-    const j=await (await fetch('/api/automations/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ steps, text:document.getElementById('free-text').value||'', title })})).json();
-    if(j.ok){ addBubble(`✅ נשמר (id: <span class="mono">${esc(j.id)}</span>)`,'sys'); loadMyAutomations(); } else addBubble('❌ שמירה נכשלה'+mono(j),'sys');
+  addButtonBubble('שמור', async ()=>{
+    const title=(titleInput.value||'').trim()||'אוטומציה ללא שם';
+    const steps=collectReviewedSteps();
+    try{
+      const j=await (await fetch('/api/automations/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ steps, text:document.getElementById('free-text').value||'', title })})).json();
+      if(j.ok){ addBubble(`✅ נשמר (id: <span class="mono">${esc(j.id)}</span>)`,'sys'); loadMyAutomations(); }
+      else { addBubble('❌ שמירה נכשלה'+mono(j),'sys'); }
+    }catch{ addBubble('❌ שמירה נכשלה','sys'); }
   });
 }
-async function loadMyAutomations(){ const ul=document.getElementById('autos-list'); ul.innerHTML='<li class="p-3 rounded-lg border">טוען…</li>';
-  try{ const j=await (await fetch('/api/automations/list')).json(); if(!j.ok){ ul.innerHTML='<li class="p-3 rounded-lg border text-red-600">שגיאה בטעינה</li>'; return; } renderAutos(j.items||[]); }
-  catch{ ul.innerHTML='<li class="p-3 rounded-lg border text-red-600">שגיאה בטעינה</li>'; } }
+
+async function loadMyAutomations(){
+  const ul=document.getElementById('autos-list'); ul.innerHTML='<li class="p-3 rounded-lg border">טוען…</li>';
+  try{
+    const resp = await fetch('/api/automations/list');
+    if(resp.status===401){ ul.innerHTML='<li class="p-3 rounded-lg border text-gray-600">התחבר עם Google כדי לראות אוטומציות שמורות</li>'; return; }
+    const j=await resp.json();
+    if(!j.ok){ ul.innerHTML='<li class="p-3 rounded-lg border text-red-600">שגיאה בטעינה</li>'; return; }
+    renderAutos(j.items||[]);
+  }catch{ ul.innerHTML='<li class="p-3 rounded-lg border text-red-600">שגיאה בטעינה</li>'; }
+}
 function renderAutos(items){
-  const ul=document.getElementById('autos-list'); ul.innerHTML=''; const q=(document.getElementById('autos-search')?.value||'').trim().toLowerCase();
+  const ul=document.getElementById('autos-list'); ul.innerHTML='';
+  const q=(document.getElementById('autos-search')?.value||'').trim().toLowerCase();
   items.filter(x=>!q||(x.title||'').toLowerCase().includes(q)).forEach(x=>{
     const li=document.createElement('li'); li.className='p-3 rounded-lg border';
-    li.innerHTML=`<div class="font-semibold
+    li.innerHTML=`
+      <div class="font-semibold">${esc(x.title||'ללא שם')}</div>
+      <div class="text-xs text-gray-500 mono mt-1">${esc(x.id||'')}</div>
+      <div class="mt-2 flex gap-2">
+        <button class="btn-ghost" data-act="run" data-id="${esc(x.id)}">הרץ</button>
+        <button class="btn-ghost" data-act="del" data-id="${esc(x.id)}">מחק</button>
+      </div>`;
+    ul.appendChild(li);
+  });
+  if(!ul.children.length){
+    ul.innerHTML='<li class="p-3 rounded-lg border text-gray-500">אין אוטומציות שמורות</li>';
+  }
+}
+document.getElementById('autos-list').addEventListener('click', async (e)=>{
+  const btn=e.target.closest('button[data-act]'); if(!btn) return;
+  const id=btn.dataset.id, act=btn.dataset.act;
+  if(act==='run'){
+    addBubble(`▶️ מריץ אוטומציה שמורה (${esc(id)})…`,'sys');
+    try{
+      const j=await (await fetch('/api/automations/execute-saved',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})})).json();
+      addBubble((j.ok?'✅':'❌')+' תוצאה: '+mono(j),'sys');
+    }catch{ addBubble('❌ שגיאה בהרצה','sys'); }
+  }else if(act==='del'){
+    if(!confirm('למחוק את האוטומציה?')) return;
+    try{ await fetch('/api/automations/'+encodeURIComponent(id),{method:'DELETE'}); loadMyAutomations(); }catch{}
+  }
+});
+
+/* Bindings */
+document.getElementById('btn-g-connect').addEventListener('click', connectGoogle);
+document.getElementById('btn-g-disconnect').addEventListener('click', disconnectGoogle);
+document.getElementById('btn-debug-nlp').addEventListener('click', ()=> planFromText());
+document.getElementById('btn-create').addEventListener('click', ()=> planFromText());
+document.getElementById('btn-save-defaults').addEventListener('click', saveDefaultsFromPanel);
+document.getElementById('btn-run-reviewed').addEventListener('click', ()=> executeWithPlanAndAnswers({}, true));
+document.getElementById('btn-save-automation').addEventListener('click', saveAutomation);
+document.getElementById('autos-search').addEventListener('input', loadMyAutomations);
+
+/* Init */
+(function init(){
+  refreshGoogleAccount();
+  loadDefaultsToPanel();
+  renderSuggested();
+  loadMyAutomations();
+  if(location.hash.includes('connected=1')){ addBubble('🔐 התחברת ל-Google','sys'); location.hash=''; }
+})();
+  </script>
+</body>
+</html>
