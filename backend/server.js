@@ -1,624 +1,852 @@
-'use strict';
-
 /**
- * Automation Builder - Backend (Render-ready)
- * LLM-first planner (Groq/OpenAI) + Heuristics fallback + Hebrew normalization.
- * Supports: Gmail/Sheets OAuth, planning, execute, saved automations, dry-run.
+ * Automation Builder — robust server
+ * - Static hosting for /public (wizard_plus.html)
+ * - Google OAuth (tokens via file or Upstash Redis)
+ * - Planner:
+ *    • heuristicsPlan(text)  — בסיס מהיר
+ *    • groqPlan(text)       — LLM עם JSON-Schema + few-shots
+ *    • extractEntities()    — חילוץ ישויות בסיסי (אימייל/טלפון/Sheet/זמנים/עמודות)
+ * - Execution:
+ *    • Triggers: gmail.unreplied, gmail.sent, sheets.match
+ *    • Actions : sheets.append, email.send, whatsapp.send, slack.post, telegram.send, webhook.post
+ * - Automations CRUD: save/list/execute-saved
+ *
+ * ENV (דוגמאות):
+ *  PORT=4000
+ *  PUBLIC_DIR=./public
+ *  TOKEN_STORE=file   # או redis
+ *  # Upstash (אם TOKEN_STORE=redis):
+ *  UPSTASH_REDIS_REST_URL=...
+ *  UPSTASH_REDIS_REST_TOKEN=...
+ *  # Google OAuth:
+ *  GOOGLE_CLIENT_ID=...
+ *  GOOGLE_CLIENT_SECRET=...
+ *  GOOGLE_REDIRECT_URI=https://<your-app>/api/google/oauth/callback
+ *  # Groq:
+ *  GROQ_API_KEY=...
+ *  GROQ_MODEL=llama-3.1-8b-instant
+ *  # Email (ל־email.send, אופציונלי — אפשר גם להחליף לספק אחר)
+ *  SMTP_HOST=smtp.gmail.com
+ *  SMTP_USER=...
+ *  SMTP_PASS=...
+ *  # WhatsApp (Twilio):
+ *  TWILIO_ACCOUNT_SID=...
+ *  TWILIO_AUTH_TOKEN=...
+ *  TWILIO_WHATSAPP_FROM=whatsapp:+1XXXXXXXXXX
  */
 
-const express = require('express');
-const cors = require('cors');
-const morgan = require('morgan');
-const path = require('path');
-const fs = require('fs');
-const { google } = require('googleapis');
-const { JWT } = require('google-auth-library');
-const twilio = require('twilio');
+const path = require("path");
+const fs = require("fs");
+const express = require("express");
+const cors = require("cors");
+const morgan = require("morgan");
 
-const fetchFn = (...args) => fetch(...args);
+const { google } = require("googleapis");
+const fetch = (...args) => import("node-fetch").then(({ default: f }) => f(...args));
+const nodemailer = require("nodemailer");
+const { v4: uuidv4 } = require("uuid");
+
+// --------- Config & dirs ----------
+const PORT = process.env.PORT || 4000;
+const PUBLIC_DIR = path.resolve(process.env.PUBLIC_DIR || "./public");
+const DATA_DIR = path.resolve("./data");
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+
+// --------- Token store (file/redis) ----------
+const TOKEN_STORE = (process.env.TOKEN_STORE || "file").toLowerCase(); // "file" | "redis"
+let kv = null;
+if (TOKEN_STORE === "redis") {
+  kv = {
+    async get(key) {
+      const resp = await fetch(process.env.UPSTASH_REDIS_REST_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.UPSTASH_REDIS_REST_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ command: ["GET", key] }),
+      });
+      const j = await resp.json();
+      return j.result ? JSON.parse(j.result) : null;
+    },
+    async set(key, value) {
+      await fetch(process.env.UPSTASH_REDIS_REST_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.UPSTASH_REDIS_REST_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ command: ["SET", key, JSON.stringify(value)] }),
+      });
+    },
+    async del(key) {
+      await fetch(process.env.UPSTASH_REDIS_REST_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.UPSTASH_REDIS_REST_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ command: ["DEL", key] }),
+      });
+    },
+  };
+} else {
+  const FILE = path.join(DATA_DIR, "tokens.json");
+  const load = () => (fs.existsSync(FILE) ? JSON.parse(fs.readFileSync(FILE, "utf8")) : {});
+  const save = (obj) => fs.writeFileSync(FILE, JSON.stringify(obj, null, 2));
+  kv = {
+    async get(key) {
+      const all = load();
+      return all[key] || null;
+    },
+    async set(key, value) {
+      const all = load();
+      all[key] = value;
+      save(all);
+    },
+    async del(key) {
+      const all = load();
+      delete all[key];
+      save(all);
+    },
+  };
+}
+
+// --------- Express ----------
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '2mb' }));
-app.use(express.urlencoded({ extended: false }));
-app.use(morgan('dev'));
+app.use(express.json({ limit: "2mb" }));
+app.use(morgan("tiny"));
+app.use(express.static(PUBLIC_DIR, { extensions: ["html"] }));
 
-/* ---------------- Static ---------------- */
-const PUBLIC_DIR = (process.env.PUBLIC_DIR && fs.existsSync(process.env.PUBLIC_DIR))
-  ? process.env.PUBLIC_DIR
-  : path.join(__dirname, 'public');
-if (!fs.existsSync(PUBLIC_DIR)) console.warn('[static] PUBLIC_DIR missing:', PUBLIC_DIR);
-app.use(express.static(PUBLIC_DIR));
+// Debug: static dir
+app.get("/api/debug/staticDir", (req, res) => {
+  res.json({ ok: true, PUBLIC_DIR, TOKEN_STORE });
+});
 
-/* ---------------- Env ---------------- */
-const PORT = process.env.PORT || 5000;
-const OAUTH_REDIRECT_URL = process.env.OAUTH_REDIRECT_URL || '';
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
-const LEGACY_GOOGLE_REFRESH_TOKEN = process.env.GOOGLE_REFRESH_TOKEN || '';
-const GOOGLE_APPLICATION_CREDENTIALS = process.env.GOOGLE_APPLICATION_CREDENTIALS || '';
+// explicit wizard route (to avoid GET issue)
+app.get("/wizard_plus.html", (req, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, "wizard_plus.html"));
+});
 
-const NLP_PROVIDER = (process.env.NLP_PROVIDER || 'heuristic').toLowerCase();
-const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
+// ---------- Google OAuth ----------
+const oauth2Client = new google.auth.OAuth2(
+  process.env.GOOGLE_CLIENT_ID || "",
+  process.env.GOOGLE_CLIENT_SECRET || "",
+  process.env.GOOGLE_REDIRECT_URI || ""
+);
 
-const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID || '';
-const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || '';
-const TWILIO_WHATSAPP_FROM = process.env.TWILIO_WHATSAPP_FROM || '';
-const TWILIO_WHATSAPP_TO = process.env.TWILIO_WHATSAPP_TO || '';
-
-const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL || '';
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
-const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const WEBHOOK_URL = process.env.WEBHOOK_URL || '';
-
-const TOKEN_STORE = (process.env.TOKEN_STORE || 'file').toLowerCase();
-const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL || '';
-const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || '';
-const TOKENS_FILE_PATH = process.env.TOKENS_FILE_PATH || path.join(process.cwd(), 'tokens.json');
-const KV_FILE_PATH = process.env.KV_FILE_PATH || path.join(process.cwd(), 'store.json');
-
-const capabilities = [
-  'gmail.unreplied','gmail.from','sheets.match',
-  'sheets.append','email.send','whatsapp.send','slack.send','telegram.send','webhook.call'
+const SCOPES = [
+  "https://www.googleapis.com/auth/gmail.readonly",
+  "https://www.googleapis.com/auth/spreadsheets",
+  "https://www.googleapis.com/auth/userinfo.email",
+  "https://www.googleapis.com/auth/userinfo.profile",
+  "openid",
 ];
-const TOKENS_KEY = 'google_oauth_tokens_v1';
 
-/* ---------------- Token Store ---------------- */
-async function redisCommand(arr) {
-  const url = UPSTASH_URL, token = UPSTASH_TOKEN;
-  if (!url || !token) throw new Error('UPSTASH env not set');
-  const resp = await fetchFn(url, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ command: arr }) });
-  if (!resp.ok) throw new Error(`Upstash ${resp.status}`);
-  return await resp.json();
-}
-async function saveTokens(tokens){
-  try{
-    if (TOKEN_STORE === 'redis') { await redisCommand(['SET', TOKENS_KEY, JSON.stringify(tokens)]); }
-    else { fs.writeFileSync(TOKENS_FILE_PATH, JSON.stringify(tokens, null, 2)); }
-    return true;
-  }catch(e){ console.error('saveTokens', e); return false; }
-}
-async function loadTokens(){
-  try{
-    if (TOKEN_STORE === 'redis'){ const d = await redisCommand(['GET', TOKENS_KEY]); return d?.result ? JSON.parse(d.result) : null; }
-    if (!fs.existsSync(TOKENS_FILE_PATH)) return null;
-    return JSON.parse(fs.readFileSync(TOKENS_FILE_PATH,'utf8'));
-  }catch(e){ console.error('loadTokens', e); return null; }
-}
-async function clearTokens(){
-  try{
-    if (TOKEN_STORE === 'redis') await redisCommand(['DEL', TOKENS_KEY]);
-    else if (fs.existsSync(TOKENS_FILE_PATH)) fs.unlinkSync(TOKENS_FILE_PATH);
-    return true;
-  }catch(e){ console.error('clearTokens', e); return false; }
-}
-async function storeHealth(){
-  const res = { store: TOKEN_STORE, ok: true };
-  try{
-    if (TOKEN_STORE === 'redis'){
-      const key = `__probe_${Date.now()}`;
-      await redisCommand(['SET', key, '1']); const got = await redisCommand(['GET', key]); await redisCommand(['DEL', key]);
-      if (!got?.result) throw new Error('redis get failed');
-    } else {
-      fs.writeFileSync(TOKENS_FILE_PATH+'.probe','1'); const ok = fs.existsSync(TOKENS_FILE_PATH+'.probe'); fs.unlinkSync(TOKENS_FILE_PATH+'.probe'); if (!ok) throw new Error('file probe failed');
-    }
-  }catch(e){ res.ok=false; res.error=e.message||String(e); }
-  return res;
-}
+const TOKEN_KEY = "google_tokens"; // single-user store. אפשר לשפר לריבוי משתמשים לפי session/userId
 
-/* ---------------- KV (file/redis) ---------------- */
-async function kvSet(key, val){
-  try{
-    if (TOKEN_STORE === 'redis') await redisCommand(['SET', `kv:${key}`, JSON.stringify(val)]);
-    else {
-      const db = fs.existsSync(KV_FILE_PATH) ? JSON.parse(fs.readFileSync(KV_FILE_PATH,'utf8')||'{}') : {};
-      db[key]=val; fs.writeFileSync(KV_FILE_PATH, JSON.stringify(db,null,2));
-    }
-  }catch(e){ console.error('kvSet', e); }
+async function getTokens() {
+  return (await kv.get(TOKEN_KEY)) || null;
 }
-async function kvGet(key){
-  try{
-    if (TOKEN_STORE === 'redis'){ const d = await redisCommand(['GET', `kv:${key}`]); return d?.result ? JSON.parse(d.result) : null; }
-    if (!fs.existsSync(KV_FILE_PATH)) return null;
-    return (JSON.parse(fs.readFileSync(KV_FILE_PATH,'utf8')||'{}'))[key] ?? null;
-  }catch(e){ console.error('kvGet', e); return null; }
+async function setTokens(t) {
+  await kv.set(TOKEN_KEY, t);
 }
-
-/* ---------------- Google Clients ---------------- */
-async function getOAuth2(){
-  const oauth2Client = new google.auth.OAuth2(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, OAUTH_REDIRECT_URL);
-  const persisted = await loadTokens();
-  if (persisted?.refresh_token) oauth2Client.setCredentials({ refresh_token: persisted.refresh_token });
-  else if (LEGACY_GOOGLE_REFRESH_TOKEN) oauth2Client.setCredentials({ refresh_token: LEGACY_GOOGLE_REFRESH_TOKEN });
+async function clearTokens() {
+  await kv.del(TOKEN_KEY);
+}
+async function getAuthedClient() {
+  const tokens = await getTokens();
+  if (!tokens) return null;
+  oauth2Client.setCredentials(tokens);
   return oauth2Client;
 }
-async function getSheetsClient(){
-  if (GOOGLE_APPLICATION_CREDENTIALS && fs.existsSync(GOOGLE_APPLICATION_CREDENTIALS)){
-    const sa = new JWT({ keyFile: GOOGLE_APPLICATION_CREDENTIALS, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
-    return google.sheets({ version: 'v4', auth: sa });
-  }
-  return google.sheets({ version: 'v4', auth: await getOAuth2() });
-}
-async function getGmailClient(){ return google.gmail({ version: 'v1', auth: await getOAuth2() }); }
-async function getCurrentUserEmail(){ try{ const g=await getGmailClient(); const p=await g.users.getProfile({userId:'me'}); return p.data.emailAddress||null; } catch{ return null; } }
 
-/* ---------------- Basic Routes ---------------- */
-app.get('/', (_,res)=>res.redirect('/wizard_plus.html'));
-app.get(['/wizard_plus.html','/wizard_plus'], (req,res)=>{
-  const fp=path.join(PUBLIC_DIR,'wizard_plus.html'); if(!fs.existsSync(fp)) return res.status(404).send('wizard_plus.html not found'); res.sendFile(fp);
+app.get("/api/google/oauth/url", async (req, res) => {
+  try {
+    const url = oauth2Client.generateAuthUrl({
+      access_type: "offline",
+      prompt: "consent",
+      scope: SCOPES,
+    });
+    res.json({ ok: true, url });
+  } catch (e) {
+    res.json({ ok: false, error: "OAUTH_URL_FAILED", details: String(e) });
+  }
 });
-app.get('/api/health', (_,res)=>res.json({ok:true,time:new Date().toISOString()}));
-app.get('/api/registry', (_,res)=>res.json({ok:true,capabilities}));
-app.get('/api/debug/staticDir', async (_,res)=>{ const health=await storeHealth(); res.json({ok:true,PUBLIC_DIR,TOKEN_STORE,storeOk:health.ok,storeError:health.error||null}); });
-app.get('/api/nlp/status', (_,res)=>{ res.json({ ok:true, provider: NLP_PROVIDER, model: GROQ_MODEL }); });
 
-/* ---------------- Google OAuth ---------------- */
-const OAUTH_SCOPES = [
-  'https://www.googleapis.com/auth/gmail.readonly',
-  'https://www.googleapis.com/auth/gmail.send',
-  'https://www.googleapis.com/auth/spreadsheets',
-];
-app.get('/api/google/oauth/url', (req,res)=>{
-  try{
-    const o = new google.auth.OAuth2(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, OAUTH_REDIRECT_URL);
-    const url = o.generateAuthUrl({ access_type:'offline', scope:OAUTH_SCOPES, prompt:'consent' });
-    res.json({ ok:true, url });
-  }catch(e){ res.status(500).json({ ok:false, error:'OAUTH_URL_FAILED' }); }
+app.get("/api/google/oauth/callback", async (req, res) => {
+  try {
+    const { code } = req.query;
+    const { tokens } = await oauth2Client.getToken(code);
+    await setTokens(tokens);
+    res.send(
+      `<script>if(window.opener){window.opener.location.hash='#connected=1';window.close();}else{location.href='/wizard_plus.html#connected=1'}</script>`
+    );
+  } catch (e) {
+    res.status(500).send("OAuth callback failed");
+  }
 });
-app.get('/api/google/oauth/callback', async (req,res)=>{
-  try{
-    const code=req.query.code; const o=new google.auth.OAuth2(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, OAUTH_REDIRECT_URL);
-    const { tokens } = await o.getToken(code);
-    const existing = await loadTokens();
-    const merged = { ...existing, ...tokens, refresh_token: tokens.refresh_token || existing?.refresh_token || LEGACY_GOOGLE_REFRESH_TOKEN || '' };
-    const saved = await saveTokens(merged);
-    if(!saved) return res.status(500).send('<html dir="rtl"><body>נכשל לשמור טוקנים. בדקו TOKEN_STORE.<br/><a href="/wizard_plus.html#connected=0">חזרה</a></body></html>');
-    res.redirect('/wizard_plus.html#connected=1');
-  }catch(e){ res.status(500).json({ ok:false, error:'OAUTH_CALLBACK_FAILED' }); }
+
+app.get("/api/google/auth/status", async (req, res) => {
+  const t = await getTokens();
+  res.json({ ok: true, hasRefreshToken: !!(t && t.refresh_token) });
 });
-app.get('/api/google/auth/status', async (req,res)=>{
-  try{
-    const tokens = await loadTokens(); const health = await storeHealth();
-    res.json({ ok:true, hasRefreshToken: !!(tokens?.refresh_token || LEGACY_GOOGLE_REFRESH_TOKEN), storeOk:health.ok });
-  }catch{ res.json({ ok:true, hasRefreshToken: !!LEGACY_GOOGLE_REFRESH_TOKEN, storeOk:false }); }
+
+app.get("/api/google/me", async (req, res) => {
+  try {
+    const client = await getAuthedClient();
+    if (!client) return res.status(401).json({ ok: false, error: "NO_TOKENS" });
+    const oauth2 = google.oauth2({ version: "v2", auth: client });
+    const me = await oauth2.userinfo.get();
+    res.json({ ok: true, ...me.data });
+  } catch (e) {
+    res.json({ ok: false, error: "GOOGLE_ME_FAILED" });
+  }
 });
-app.post('/api/google/logout', async (req,res)=>{ await clearTokens(); res.json({ ok:true }); });
-app.get('/api/google/me', async (req,res)=>{ try{ const g=await getGmailClient(); const p=await g.users.getProfile({userId:'me'}); res.json({ok:true,emailAddress:p.data.emailAddress}); }catch(e){ res.json({ok:false,error:'GOOGLE_ME_FAILED'}); }});
 
-/* ===================================================================
-   NLP Planner (Groq/OpenAI first, Heuristics fallback) + Hebrew utils
-=================================================================== */
-const SKILLS = {
-  triggers: {
-    'gmail.unreplied': { required:['fromEmail'], optional:['newerThanDays','hours','limit'], defaults:{ newerThanDays:30, hours:10, limit:50 } },
-    'gmail.from':      { required:['fromEmails'], optional:['newerThanDays','limit'],       defaults:{ newerThanDays:30, limit:100 } },
-    'sheets.match':    { required:['spreadsheetId','sheetName','columnName','equals'], optional:['mode'], defaults:{ mode:'new' } },
-  },
-  actions: {
-    'sheets.append': { required:['spreadsheetId','sheetName','row'], optional:[] },
-    'email.send':    { required:['to'], optional:['subject','body'] },
-    'whatsapp.send': { required:['to'], optional:['message'] },
-    'slack.send':    { required:[], optional:['message'] },
-    'telegram.send': { required:[], optional:['message'] },
-    'webhook.call':  { required:[], optional:['url','method','headers','context'] },
-  },
-};
-function normalizeHe(s=''){
-  let t=String(s||'');
-  t=t.replace(/[\u200e\u200f]/g,'').trim()
-     .replace(/[“”„״]/g,'"').replace(/[’׳]/g,'\'').replace(/[–—]/g,'-')
-     .replace(/ווא?טסאפ|ווטסאפ/gi,'whatsapp').replace(/גוגל\s*שיט|שיט\b/gi,'sheet').replace(/\bgmail\b/gi,'gmail')
-     .replace(/\s+/g,' ');
-  return t;
-}
-const RE_GMAIL_WORDS=/(gmail|מייל(?:ים)?|דוא["”]?ל|אימייל)/i, RE_UNREPLIED=/(שלא\s*נענ(?:ו|ה)|לא\s*נענ(?:ו|ה)|ללא\s*מענה|unrepl(?:ied)?|sla)/i,
-      RE_SEND_VERBS=/(שול(?:ח|חים|חת|חות)|ישל(?:ח|חו)|שלח(?:ו)?|send|נשלח)/i, RE_WHATSAPP=/(whats\s*app|whatsapp|ו[וא]?טסאפ)/i,
-      RE_SHEET_WORDS=/(גיליון|sheet|טבלה)/i, RE_TWO_PEOPLE=/(?:2|שניים|שני|שתיים|שתי)\s*(?:אנשים|שולחים)|אחד\s*מהם/i;
-function extractEmail(s=''){ const m=s.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/); return m?m[0]:''; }
-function extractEmails(s=''){ const a=s.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g); return Array.isArray(a)?Array.from(new Set(a)):[]; }
-function extractSpreadsheetId(s=''){ const m=s.match(/spreadsheets\/d\/([a-zA-Z0-9-_]+)/); if(m) return m[1]; const m2=s.match(/spreadsheetId=([a-zA-Z0-9-_]+)/); return m2?m2[1]:''; }
-function extractSheetName(s=''){ const t=s.replace(/\n/g,' '); let name=''; let m=t.match(/לשונית\s+["“]?(.+?)["”]?(?=\s|$)/i); if(m) name=m[1];
-  if(!name){ m=t.match(/\b(?:tab|sheet|לשונית)\s+["“]?([A-Za-zא-ת0-9 _\-]+)["”]?/i); if(m) name=m[1]; }
-  if(!name){ m=t.match(/\b(?:בשם|שם)\s+["“]?([A-Za-zא-ת0-9 _\-]+)["”]?/i); if(m) name=m[1]; }
-  if(!name){ m=t.match(/בלשונית\s+([A-Za-zא-ת0-9 _\-]+)/i); if(m) name=m[1]; }
-  return (name||'').trim().replace(/^בשם\s+/i,'');
-}
-function extractColumnName(s=''){ const t=s.replace(/\n/g,' '); let m=t.match(/בשדה(?:\s+של)?\s+["“]?([A-Za-zא-ת0-9 _\-]+)["”]?/i); if(m) return m[1].trim();
-  m=t.match(/(?:עמוד[הת]|column)\s+["“]?([A-Za-zא-ת0-9 _\-]+)["”]?/i); return m?m[1].trim():''; }
-function extractEqualsValue(s=''){ const t=s.replace(/\n/g,' '); let m=t.match(/הנתון\s+["“]?([^",]+?)["”]?(?:\s|$|,)/i); if(m) return m[1].trim();
-  m=t.match(/הערך\s+["“]?([^",]+?)["”]?(?:\s|$|,)/i); if(m) return m[1].trim();
-  m=t.match(/שווה\s+["“]?([^",]+?)["”]?(?:\s|$|,)/i); if(m) return m[1].trim();
-  m=t.match(/["“]([^"]+?)["”]/); return m?m[1].trim():''; }
-function extractHours(s=''){ const m=s.match(/(\d+)\s*שעות|\b(\d+)\s*h/i); if(m) return parseInt(m[1]||m[2],10); return /יום/.test(s)?24:10; }
-function extractNewerThanDays(s=''){ if(/חודש/.test(s)) return 30; if(/שבוע/.test(s)) return 7; const m=s.match(/(\d+)\s*י?ימים?/); if(m) return parseInt(m[1],10); return 30; }
-function normalizeWhatsApp(x=''){ let n=String(x).trim().replace(/^whatsapp:/i,'').replace(/[^\d+]/g,''); if(!n) return null; if(!n.startsWith('+')) n='+'+n; return n; }
-function looksLikeIntlPhone(n=''){ const x=normalizeWhatsApp(n); return !!(x && /^\+\d{9,15}$/.test(x)); }
-
-/* ---------- Heuristics plan ---------- */
-function heuristicsPlan(textOriginal){
-  const t = normalizeHe(textOriginal); const steps=[]; const missing=[];
-  const mentionsMail = RE_GMAIL_WORDS.test(t), mentionsUnreplied = RE_UNREPLIED.test(t);
-
-  // SLA: unreplied
-  if(mentionsMail && mentionsUnreplied){
-    const fromEmail = extractEmail(t); const newerThanDays = extractNewerThanDays(t); const hours = extractHours(t);
-    steps.push({ trigger:{ type:'gmail.unreplied', params:{ fromEmail: fromEmail||'', newerThanDays, hours, limit:50 } } });
-    if (RE_WHATSAPP.test(t)){
-      steps.push({ action:{ type:'whatsapp.send', params:{ to:'', message:'נמצא מייל שלא נענה: {{item.subject}} — {{item.webLink}}' } } });
-      if (!fromEmail) missing.push({ key:'fromEmail', label:'כתובת המייל של השולח', example:'name@example.com' });
-      missing.push({ key:'to', label:'מספר WhatsApp כולל קידומת מדינה', example:'9725xxxxxxxx' });
-      return { steps, missing };
-    } else {
-      const spreadsheetId = extractSpreadsheetId(t);
-      steps.push({ action:{ type:'sheets.append', params:{ spreadsheetId: spreadsheetId||'', sheetName:'SLA',
-        row:{ from:'{{item.from}}', subject:'{{item.subject}}', date:'{{item.date}}', threadId:'{{item.threadId}}', webLink:'{{item.webLink}}' } } } });
-      if(!fromEmail) missing.push({ key:'fromEmail', label:'כתובת המייל של השולח', example:'name@example.com' });
-      if(!spreadsheetId) missing.push({ key:'spreadsheetId', label:'ה-ID של ה-Google Sheet', example:'https://docs.google.com/spreadsheets/d/<ID>/edit' });
-      return { steps, missing };
-    }
+app.post("/api/google/logout", async (req, res) => {
+  try {
+    await clearTokens();
+    res.json({ ok: true });
+  } catch (e) {
+    res.json({ ok: false });
   }
+});
 
-  // Two senders → sheet log
-  const mentionsSheet = RE_SHEET_WORDS.test(t);
-  const mentionsTwo = RE_TWO_PEOPLE.test(t) && RE_SEND_VERBS.test(t);
-  const mentionsSomeoneSends = /כל\s*פעם\s*שאחד(?:\s*מהם)?\s*שול/i.test(t);
-  if(mentionsSheet && (mentionsTwo || mentionsSomeoneSends || RE_SEND_VERBS.test(t))){
-    const emails = extractEmails(t); const fromEmails = emails.join(', '); const spreadsheetId = extractSpreadsheetId(t)||''; const sheetName = extractSheetName(t)||'InboxLog';
-    steps.push({ trigger:{ type:'gmail.from', params:{ fromEmails: fromEmails||'', newerThanDays:30, limit:100 } } });
-    steps.push({ action:{ type:'sheets.append', params:{ spreadsheetId: spreadsheetId||'', sheetName,
-      row:{ from:'{{item.from}}', subject:'{{item.subject}}', date:'{{item.date}}', snippet:'{{item.snippet}}', body:'{{item.body}}', threadId:'{{item.threadId}}', webLink:'{{item.webLink}}' } } } });
-    if(!fromEmails) missing.push({ key:'fromEmails', label:'כתובות המייל של השולחים (מופרד בפסיק)', example:'a@ex.com, b@ex.com' });
-    if(!spreadsheetId) missing.push({ key:'spreadsheetId', label:'ה-ID של ה-Google Sheet', example:'https://docs.google.com/spreadsheets/d/<ID>/edit' });
-    missing.push({ key:'sheetName', label:'שם הגיליון (Sheet)', example:'InboxLog' });
-    return { steps, missing };
-  }
+// ---------- Google helpers ----------
+async function getGmail() {
+  const client = await getAuthedClient();
+  if (!client) throw new Error("NO_TOKENS");
+  return google.gmail({ version: "v1", auth: client });
+}
+async function getSheets() {
+  const client = await getAuthedClient();
+  if (!client) throw new Error("NO_TOKENS");
+  return google.sheets({ version: "v4", auth: client });
+}
 
-  // Sheets match → Email/WhatsApp
-  if (/(google\s*sheets?|גיליון|sheet|לשונית|טאב|row|שורה)/i.test(t)) {
-    const spreadsheetId = extractSpreadsheetId(t)||''; const sheetName = extractSheetName(t)||'Sheet1';
-    const columnName = extractColumnName(t)||''; const equals = extractEqualsValue(t)||'';
-    steps.push({ trigger:{ type:'sheets.match', params:{ spreadsheetId, sheetName, columnName, equals, mode:'new' } } });
-    if (/מייל|email|אימייל/i.test(t)){
-      steps.push({ action:{ type:'email.send', params:{ to:'', subject:'התראה מגיליון {{item.__sheet}}', body:'{{item.__rowAsText}}' } } });
-      if(!spreadsheetId) missing.push({ key:'spreadsheetId', label:'ה-ID של ה-Google Sheet', example:'https://docs.google.com/spreadsheets/d/<ID>/edit' });
-      if(!sheetName)     missing.push({ key:'sheetName', label:'שם הגליון (Sheet)', example:'SLA או Sheet1' });
-      if(!columnName)    missing.push({ key:'columnName', label:'שם העמודה/השדה', example:'project menger' });
-      if(!equals)        missing.push({ key:'equals', label:'הערך שתואם להתראה', example:'haim shafir' });
-      missing.push({ key:'to', label:'כתובת מייל לקבלת ההתראה', example:'name@example.com' });
-      return { steps, missing };
-    }
-    if (RE_WHATSAPP.test(t)){
-      steps.push({ action:{ type:'whatsapp.send', params:{ to:'', message:'שורה חדשה: {{item.__rowAsText}}' } } });
-      if(!spreadsheetId) missing.push({ key:'spreadsheetId', label:'ה-ID של ה-Google Sheet', example:'https://docs.google.com/spreadsheets/d/<ID>/edit' });
-      if(!sheetName)     missing.push({ key:'sheetName', label:'שם הגיליון (Sheet)', example:'SLA או Sheet1' });
-      if(!columnName)    missing.push({ key:'columnName', label:'שם העמודה/השדה', example:'project menger' });
-      if(!equals)        missing.push({ key:'equals', label:'הערך שתואם להתראה', example:'haim shafir' });
-      missing.push({ key:'to', label:'מספר WhatsApp כולל קידומת מדינה', example:'9725xxxxxxxx' });
-      return { steps, missing };
-    }
-  }
-
-  return { steps:[], missing:[] };
-}
-function humanizeKey(skillName,key){
-  const map = {
-    spreadsheetId:{ label:'ה-ID של ה-Google Sheet', example:'https://docs.google.com/spreadsheets/d/<ID>/edit' },
-    sheetName:{ label:'שם הגיליון (Sheet)', example:'InboxLog' },
-    columnName:{ label:'שם העמודה/השדה', example:'project menger' },
-    equals:{ label:'הערך שתואם להתראה', example:'haim shafir' },
-    fromEmail:{ label:'כתובת המייל של השולח', example:'name@example.com' },
-    fromEmails:{ label:'כתובות המייל של השולחים (מופרד בפסיק)', example:'a@ex.com, b@ex.com' },
-    to:{ label:'כתובת מייל (או מספר בינ"ל ל-WhatsApp)', example:'name@example.com או 9725xxxxxxxx' },
-  };
-  const base = map[key] || { label:key, example:'' }; return { key, ...base };
-}
-function computeMissingFromRegistry(proposal){
-  const missing=[]; for(const step of (proposal||[])){
-    if(step.trigger){ const name=step.trigger.type; const spec=SKILLS.triggers[name]; if(!spec) continue; const p=step.trigger.params||{}; for(const k of spec.required) if(!p[k]) missing.push(humanizeKey(name,k)); }
-    if(step.action){  const name=step.action.type;  const spec=SKILLS.actions[name];  if(!spec) continue; const p=step.action.params||{};  for(const k of spec.required) if(!p[k]) missing.push(humanizeKey(name,k)); }
-  }
-  const seen=new Set(); return missing.filter(m=>seen.has(m.key)?false:(seen.add(m.key),true));
-}
-function buildQuestions(missing){
-  return (missing||[]).map(m=>{
-    switch(m.key){
-      case 'fromEmails': return 'אילו כתובות מייל של שני האנשים? (הפרד בפסיק)';
-      case 'spreadsheetId': return 'איזה גיליון Google? (אפשר להדביק את כל הקישור)';
-      case 'sheetName': return 'מה שם הלשונית (Sheet) בגיליון?';
-      case 'columnName': return 'מה שם העמודה/השדה?';
-      case 'equals': return 'איזה ערך בדיוק צריך לזהות בעמודה הזו?';
-      case 'fromEmail': return 'ממי מגיעים המיילים (כתובת מייל מלאה)?';
-      case 'to': return 'לאיזה יעד לשלוח? (כתובת מייל או מספר WhatsApp בינ"ל)';
-      default: return `חסר ערך עבור ${m.label}`;
-    }
+// ---------- Email (SMTP) ----------
+function getMailer() {
+  if (!process.env.SMTP_HOST) return null;
+  return nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: +(process.env.SMTP_PORT || 465),
+    secure: process.env.SMTP_SECURE !== "false",
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    },
   });
 }
 
-/* ---------------- LLM (Groq/OpenAI) JSON mode ---------------- */
+// ---------- WhatsApp (Twilio) ----------
+let twilioClient = null;
+if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) {
+  try {
+    twilioClient = require("twilio")(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+  } catch {}
+}
+
+// ===================== NLU Helpers =====================
+
+// Normalization of Hebrew quirks & synonyms
+function normalizeHeb(text = "") {
+  return String(text || "")
+    .replace(/[\u200e\u200f]/g, "") // LRM/RLM
+    .replace(/[“”„״]/g, '"')
+    .replace(/[’׳]/g, "'")
+    .replace(/[–—]/g, "-")
+    // synonyms
+    .replace(/ו?וואטסאפ|ווטסאפ|וואטסאפ/gi, "WhatsApp")
+    .replace(/גוגל\s*שיט|שיט\b|גיליון/gi, "Sheet")
+    .replace(/\bבשם\s+/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Quick entity extraction (regex)
+function extractEntities(text = "") {
+  const out = {};
+  // emails
+  const emails = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi);
+  if (emails && emails.length) out.emails = Array.from(new Set(emails));
+  // phone/whatsapp (very rough)
+  const phones = text.match(/\b\+?\d{9,15}\b/g);
+  if (phones && phones.length) out.phones = Array.from(new Set(phones));
+  // hours / days
+  const h = text.match(/(\d+)\s*שעות?/);
+  if (h) out.hours = +h[1];
+  const d = text.match(/(\d+)\s*ימים?/);
+  if (d) out.days = +d[1];
+  if (/חודש|30\s*יום/.test(text)) out.days = out.days || 30;
+  // sheet id
+  const m = text.match(/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (m) out.spreadsheetId = m[1];
+  // quoted column name
+  const cm = text.match(/"([^"]+)"|'([^']+)'/);
+  if (cm) out.columnName = cm[1] || cm[2];
+  return out;
+}
+
+// Heuristic baseline — returns proposal/missing or empty
+function heuristicsPlan(textRaw = "") {
+  const text = normalizeHeb(textRaw);
+  const entities = extractEntities(text);
+
+  // Gmail unreplied → Sheets/WA/Email
+  if (/שלא\s*נענה/.test(text) && /מייל/.test(text)) {
+    const proposal = [
+      {
+        trigger: {
+          type: "gmail.unreplied",
+          params: {
+            fromEmail: entities.emails?.[0] || "",
+            newerThanDays: entities.days || 30,
+            hours: entities.hours || 10,
+            limit: 50,
+          },
+        },
+      },
+    ];
+
+    // target
+    if (/whatsapp/i.test(text)) {
+      proposal.push({
+        action: {
+          type: "whatsapp.send",
+          params: {
+            to: entities.phones?.[0] ? "whatsapp:" + entities.phones[0] : "",
+            message: "נמצא מייל שלא נענה: {{item.subject}} {{item.webLink}}",
+          },
+        },
+      });
+    } else if (/sheet/i.test(text)) {
+      proposal.push({
+        action: {
+          type: "sheets.append",
+          params: {
+            spreadsheetId: entities.spreadsheetId || "",
+            sheetName: "SLA",
+            row: {
+              from: "{{item.from}}",
+              subject: "{{item.subject}}",
+              date: "{{item.date}}",
+              threadId: "{{item.threadId}}",
+              webLink: "{{item.webLink}}",
+            },
+          },
+        },
+      });
+    } else {
+      proposal.push({
+        action: {
+          type: "email.send",
+          params: {
+            to: entities.emails?.[1] || "",
+            subject: "מייל שלא נענה: {{item.subject}}",
+            body: "{{item.webLink}}",
+          },
+        },
+      });
+    }
+
+    const missing = [];
+    if (!proposal[0].trigger.params.fromEmail) {
+      missing.push({ key: "fromEmail", label: "כתובת המייל של השולח", example: "name@example.com" });
+    }
+    const act = proposal[1].action;
+    if (act.type === "sheets.append" && !act.params.spreadsheetId) {
+      missing.push({ key: "spreadsheetId", label: "ה-ID של ה-Google Sheet", example: "https://docs.google.com/spreadsheets/d/<ID>/edit" });
+    }
+    if (act.type === "email.send" && !act.params.to) {
+      missing.push({ key: "to", label: "כתובת מייל לקבלת ההתראה", example: "name@example.com" });
+    }
+    if (act.type === "whatsapp.send" && !act.params.to) {
+      missing.push({ key: "to", label: "מספר WhatsApp בינ\"ל", example: "9725xxxxxxxx" });
+    }
+    return { ok: true, provider: "heuristic", proposal, missing, nlp: null };
+  }
+
+  // Two senders → Sheet log
+  if (/טבלה משותפת|שני אנשים|שני\s+שולחים/.test(text) && /שולח(ים)?\s*מייל/.test(text)) {
+    const proposal = [
+      {
+        trigger: {
+          type: "gmail.sent",
+          params: {
+            fromEmails: entities.emails?.length ? entities.emails : [],
+            newerThanDays: entities.days || 30,
+            limit: 50,
+          },
+        },
+      },
+      {
+        action: {
+          type: "sheets.append",
+          params: {
+            spreadsheetId: entities.spreadsheetId || "",
+            sheetName: "InboxLog",
+            row: {
+              from: "{{item.from}}",
+              date: "{{item.date}}",
+              subject: "{{item.subject}}",
+              snippet: "{{item.snippet}}",
+            },
+          },
+        },
+      },
+    ];
+    const missing = [];
+    if (!proposal[0].trigger.params.fromEmails?.length) {
+      missing.push({ key: "fromEmails", label: "שמות/אימיילים של שני האנשים", example: "a@example.com,b@example.com" });
+    }
+    if (!proposal[1].action.params.spreadsheetId) {
+      missing.push({ key: "spreadsheetId", label: "ה-ID של ה-Google Sheet", example: "https://docs.google.com/spreadsheets/d/<ID>/edit" });
+    }
+    return { ok: true, provider: "heuristic", proposal, missing, nlp: null };
+  }
+
+  // Sheets match → email
+  if (/עמוד(ה|ות)|שדה/.test(text) && /שווה|שווה ל|מכיל/.test(text) && /גיליון|Sheet/i.test(text)) {
+    const proposal = [
+      {
+        trigger: {
+          type: "sheets.match",
+          params: {
+            spreadsheetId: entities.spreadsheetId || "",
+            sheetName: "Sheet1",
+            columnName: entities.columnName || "",
+            equals: "",
+            mode: "new",
+          },
+        },
+      },
+      {
+        action: {
+          type: "email.send",
+          params: {
+            to: entities.emails?.[0] || "",
+            subject: "התראה מגיליון {{item.__sheet}}",
+            body: "{{item.__rowAsText}}",
+          },
+        },
+      },
+    ];
+    const missing = [];
+    if (!proposal[0].trigger.params.spreadsheetId) {
+      missing.push({ key: "spreadsheetId", label: "ה-ID של ה-Google Sheet", example: "https://docs.google.com/spreadsheets/d/<ID>/edit" });
+    }
+    if (!proposal[0].trigger.params.columnName) {
+      missing.push({ key: "columnName", label: "שם העמודה/השדה", example: "project menger" });
+    }
+    missing.push({ key: "equals", label: "הערך שתואם להתראה", example: "haim shafir" });
+    if (!proposal[1].action.params.to) {
+      missing.push({ key: "to", label: "כתובת מייל לקבלת ההתראה", example: "name@example.com" });
+    }
+    return { ok: true, provider: "heuristic", proposal, missing, nlp: null };
+  }
+
+  return { ok: true, provider: "heuristic", proposal: [], missing: [], nlp: null };
+}
+
+// =============== Groq LLM Planner =================
+const GROQ_API_KEY = process.env.GROQ_API_KEY || "";
+const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
+
 const JSON_SCHEMA_PROMPT = `
-בחר טריגרים ופעולות מתוך הרשימה, והחזר JSON בודד:
-- טריגרים: gmail.unreplied, gmail.from, sheets.match
-- פעולות: sheets.append, email.send, whatsapp.send, slack.send, telegram.send, webhook.call
-- פורמט:
-{ "proposal":[ { "trigger":{ "type":"...", "params":{...} } } | { "action":{ "type":"...", "params":{...} } } ... ],
-  "missing":[ { "key":"...", "label":"...", "example":"..." } ... ] }
-- אם חסרים ערכים, מלא אותם ב-"missing".
-- החזר JSON בלבד, בלי טקסט חופשי.
+אתה מתכנן אוטומציות. קלט: משפט חופשי בעברית.
+החזר JSON **בלבד** במבנה הבא:
+{
+  "proposal": [ { "trigger": { "type": "<one-of: gmail.unreplied | gmail.sent | sheets.match>", "params": { ... } } } , { "action": { "type": "<one-of: sheets.append | email.send | whatsapp.send | slack.post | telegram.send | webhook.post>", "params": { ... } } } ],
+  "missing": [ { "key": "...", "label": "...", "example": "..." } ],
+  "questions": [ "..." ]
+}
+
+כללי מילוי:
+- gmail.unreplied: params = { fromEmail, newerThanDays, hours, limit }
+- gmail.sent:      params = { fromEmails (array), newerThanDays, limit }
+- sheets.match:    params = { spreadsheetId, sheetName, columnName, equals, mode="new" }
+- sheets.append:   params = { spreadsheetId, sheetName, row: { ... } }
+- email.send:      params = { to, subject, body }
+- whatsapp.send:   params = { to (בפורמט בינ"ל ללא + או עם whatsapp:+972...), message }
+- slack.post:      params = { webhookUrl, message }
+- telegram.send:   params = { botToken, chatId, message }
+- webhook.post:    params = { url, method="POST", json: { ... } }
+
+אם חסר ערך קריטי – אל תנחש: הכנס ל-missing עם label והדוגמה בעברית.
+אל תשתמש בפסיקים מיותרים. החזר JSON חוקי תקין בלבד.
 `;
-function safeJsonParse(s){ try{ return JSON.parse(s); }catch{ return null; } }
-function tryExtractJsonBlock(s){ const m = s?.match(/\{[\s\S]*\}$/); return m ? safeJsonParse(m[0]) : null; }
-function sanitizeProposal(raw=[]){
-  const AT = new Set(['gmail.unreplied','gmail.from','sheets.match']);
-  const AA = new Set(['sheets.append','email.send','whatsapp.send','slack.send','telegram.send','webhook.call']);
-  const out=[]; for(const step of raw){
-    if(step?.trigger?.type && AT.has(step.trigger.type)) out.push({ trigger:{ type:step.trigger.type, params: step.trigger.params||{} } });
-    else if(step?.action?.type && AA.has(step.action.type)) out.push({ action:{ type:step.action.type, params: step.action.params||{} } });
-  } return out;
-}
-async function callLLMForPlan(textOriginal){
-  const normalized = normalizeHe(textOriginal);
-  const userContent = `${JSON_SCHEMA_PROMPT}\n\nטקסט:\n${String(textOriginal)}\n\nNormalized:\n${normalized}\n`;
-  if (NLP_PROVIDER === 'groq'){
-    if (!process.env.GROQ_API_KEY) throw new Error('GROQ_API_KEY missing');
-    const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method:'POST',
-      headers:{ 'Authorization':'Bearer '+process.env.GROQ_API_KEY, 'Content-Type':'application/json' },
-      body: JSON.stringify({
-        model: GROQ_MODEL,
-        temperature: 0,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role:'system', content:'אתה מתכנן אוטומציות. החזר JSON בלבד לפי ההוראות.' },
-          { role:'user', content:userContent }
-        ]
-      })
-    });
-    const data = await resp.json();
-    const content = data?.choices?.[0]?.message?.content || '{}';
-    const json = safeJsonParse(content) || tryExtractJsonBlock(content) || { proposal:[], missing:[] };
-    return { raw:data, json };
+
+const FEWSHOTS = [
+  {
+    user: 'כל מייל מ-haim@example.com שלא נענה 10 שעות ב-30 ימים — רשומה ב-Google Sheet בשם "InboxLog"',
+    out: {
+      proposal: [
+        { trigger: { type: "gmail.unreplied", params: { fromEmail: "haim@example.com", newerThanDays: 30, hours: 10, limit: 50 } } },
+        { action: { type: "sheets.append", params: { spreadsheetId: "", sheetName: "InboxLog", row: { from: "{{item.from}}", subject: "{{item.subject}}", date: "{{item.date}}", webLink: "{{item.webLink}}" } } } }
+      ],
+      missing: [{ key: "spreadsheetId", label: "ה-ID של ה-Google Sheet", example: "https://docs.google.com/spreadsheets/d/<ID>/edit" }],
+      questions: []
+    }
+  },
+  {
+    user: "כשהעמודה \"project menger\" שווה \"haim shafir\" בגיליון Sheet1 — שלח מייל עם כל השורה",
+    out: {
+      proposal: [
+        { trigger: { type: "sheets.match", params: { spreadsheetId: "", sheetName: "Sheet1", columnName: "project menger", equals: "haim shafir", mode: "new" } } },
+        { action: { type: "email.send", params: { to: "", subject: "התראה מגיליון {{item.__sheet}}", body: "{{item.__rowAsText}}" } } }
+      ],
+      missing: [
+        { key: "spreadsheetId", label: "ה-ID של ה-Google Sheet", example: "https://docs.google.com/spreadsheets/d/<ID>/edit" },
+        { key: "to", label: "כתובת מייל לקבלת ההתראה", example: "name@example.com" }
+      ],
+      questions: []
+    }
+  },
+  {
+    user: "אני רוצה טבלה לשני אנשים; כל פעם שאחד מהם שולח מייל—להוסיף שורה עם השולח, התאריך, הנושא, והתוכן",
+    out: {
+      proposal: [
+        { trigger: { type: "gmail.sent", params: { fromEmails: [], newerThanDays: 30, limit: 50 } } },
+        { action: { type: "sheets.append", params: { spreadsheetId: "", sheetName: "InboxLog", row: { from: "{{item.from}}", date: "{{item.date}}", subject: "{{item.subject}}", snippet: "{{item.snippet}}" } } } }
+      ],
+      missing: [
+        { key: "fromEmails", label: "שמות/אימיילים של שני האנשים", example: "a@example.com,b@example.com" },
+        { key: "spreadsheetId", label: "ה-ID של ה-Google Sheet", example: "https://docs.google.com/spreadsheets/d/<ID>/edit" }
+      ],
+      questions: ["מי שני האנשים? הזן כתובות אימייל מופרדות בפסיק."]
+    }
   }
-  if (NLP_PROVIDER === 'openai'){
-    if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY missing');
-    const resp = await fetch('https://api.openai.com/v1/chat/completions', {
-      method:'POST',
-      headers:{ 'Authorization':'Bearer '+process.env.OPENAI_API_KEY, 'Content-Type':'application/json' },
-      body: JSON.stringify({
-        model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
-        temperature: 0,
-        response_format:{ type:'json_object' },
-        messages:[
-          { role:'system', content:'אתה מתכנן אוטומציות. החזר JSON בלבד לפי ההוראות.' },
-          { role:'user', content:userContent }
-        ]
-      })
-    });
-    const data = await resp.json();
-    const content = data?.choices?.[0]?.message?.content || '{}';
-    const json = safeJsonParse(content) || tryExtractJsonBlock(content) || { proposal:[], missing:[] };
-    return { raw:data, json };
+];
+
+async function groqPlan(textRaw = "") {
+  if (!GROQ_API_KEY) {
+    return { ok: false, error: "GROQ_MISSING_KEY" };
   }
-  throw new Error('LLM provider not enabled');
+  const text = normalizeHeb(textRaw);
+  const sys = JSON_SCHEMA_PROMPT + "\nדוגמאות (few-shots) יגיעו מיד כמסרים קודמים.\n";
+
+  const messages = [{ role: "system", content: sys }];
+  // few-shots
+  FEWSHOTS.forEach((fs) => {
+    messages.push({ role: "user", content: fs.user });
+    messages.push({ role: "assistant", content: JSON.stringify(fs.out) });
+  });
+  messages.push({ role: "user", content: text });
+
+  const body = {
+    model: GROQ_MODEL,
+    temperature: 0,
+    response_format: { type: "json_object" },
+    messages,
+  };
+
+  const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${GROQ_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const errTxt = await resp.text();
+    return { ok: false, error: "GROQ_HTTP_ERROR", details: errTxt.slice(0, 500) };
+    }
+  const j = await resp.json();
+  let parsed = null;
+  try {
+    parsed = JSON.parse(j.choices?.[0]?.message?.content || "{}");
+  } catch {
+    return { ok: false, error: "GROQ_PARSE_ERROR" };
+  }
+  // Ensure shape
+  parsed.proposal = Array.isArray(parsed.proposal) ? parsed.proposal : [];
+  parsed.missing = Array.isArray(parsed.missing) ? parsed.missing : [];
+  parsed.questions = Array.isArray(parsed.questions) ? parsed.questions : [];
+  return { ok: true, provider: "groq", ...parsed };
 }
-async function planFromText(text){
-  if (NLP_PROVIDER !== 'heuristic'){
-    try{
-      const llm = await callLLMForPlan(text);
-      const proposal = sanitizeProposal(llm.json?.proposal||[]);
-      if (proposal.length){
-        const missing = computeMissingFromRegistry(proposal);
-        const questions = buildQuestions(missing);
-        return { ok:true, provider:NLP_PROVIDER, proposal, missing, questions, nlp: llm.json||null };
+
+// Planner entry
+app.post("/api/plan/from-text", async (req, res) => {
+  try {
+    const text = String(req.body?.text || "");
+    // 1) Heuristic first
+    let plan = heuristicsPlan(text);
+    // 2) If weak/empty → Groq
+    if (!plan.proposal?.length) {
+      const llm = await groqPlan(text);
+      if (llm.ok && llm.proposal?.length) plan = llm;
+    }
+    // 3) If still empty → propose options
+    if (!plan.proposal?.length) {
+      plan.questions = plan.questions || [];
+      plan.questions.push(
+        "התכוונת אולי: (1) מיילים שנשלחו ע\"י אנשים מסוימים → שורה בגיליון, (2) מיילים שהתקבלו משולחים מסוימים → שורה בגיליון?"
+      );
+    }
+    res.json(plan);
+  } catch (e) {
+    res.json({ ok: false, error: "PLAN_FAILED", details: String(e) });
+  }
+});
+
+// ================== Automation execution ==================
+
+async function execTrigger(trigger) {
+  const type = trigger.type;
+  const p = trigger.params || {};
+  if (type === "gmail.unreplied") {
+    const gmail = await getGmail();
+    const qParts = [];
+    if (p.fromEmail) qParts.push(`from:${p.fromEmail}`);
+    if (p.newerThanDays) qParts.push(`newer_than:${p.newerThanDays}d`);
+    // not replied within X hours → simplest approx: older_than + no from:me in thread
+    // (בפועל אפשר לדייק יותר אם סורקים את ה-thread)
+    const q = qParts.join(" ");
+    const list = await gmail.users.messages.list({
+      userId: "me",
+      q,
+      maxResults: p.limit || 50,
+    });
+    const items = [];
+    for (const m of list.data.messages || []) {
+      const full = await gmail.users.messages.get({ userId: "me", id: m.id, format: "metadata", metadataHeaders: ["From", "Subject", "Date"] });
+      const hdr = Object.fromEntries((full.data.payload?.headers || []).map(h => [h.name, h.value]));
+      items.push({
+        id: full.data.id,
+        threadId: full.data.threadId,
+        from: hdr.From || "",
+        subject: hdr.Subject || "",
+        date: hdr.Date || "",
+        webLink: `https://mail.google.com/mail/u/0/#inbox/${full.data.threadId}`,
+      });
+      if (items.length >= (p.limit || 50)) break;
+    }
+    return items;
+  }
+
+  if (type === "gmail.sent") {
+    const gmail = await getGmail();
+    const froms = (p.fromEmails || []).filter(Boolean);
+    // Gmail API אין שאילתה "sent by X" על תיבת היוזר; לכן נאסוף לפי מהמיילים שמופיעים בשדה From/To ונבנה לוגיקה פשוטה:
+    const qParts = [];
+    if (p.newerThanDays) qParts.push(`newer_than:${p.newerThanDays}d`);
+    // נסתכל גם ב-inbox וגם ב-sent כדי לתפוס "שולחים" חיצוניים
+    const q = qParts.join(" ");
+    const list = await gmail.users.messages.list({ userId: "me", q, maxResults: p.limit || 50 });
+    const items = [];
+    for (const m of list.data.messages || []) {
+      const full = await gmail.users.messages.get({ userId: "me", id: m.id, format: "full" });
+      const hdr = Object.fromEntries((full.data.payload?.headers || []).map(h => [h.name, h.value]));
+      const from = hdr.From || "";
+      const subject = hdr.Subject || "";
+      const snippet = full.data.snippet || "";
+      const date = hdr.Date || "";
+      const threadId = full.data.threadId;
+      const senderEmail = (from.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i) || [])[0] || "";
+      if (!froms.length || froms.includes(senderEmail)) {
+        items.push({ from, subject, snippet, date, threadId, webLink: `https://mail.google.com/mail/u/0/#inbox/${threadId}` });
       }
-    }catch(e){ console.warn('[planner] LLM failed:', e.message||e); }
-  }
-  const h = heuristicsPlan(text);
-  if (h.steps?.length){
-    const missing = computeMissingFromRegistry(h.steps).concat(h.missing||[]);
-    const seen=new Set(); const uniq=missing.filter(m=>seen.has(m.key)?false:(seen.add(m.key),true));
-    const questions = buildQuestions(uniq);
-    return { ok:true, provider:'heuristic', proposal:h.steps, missing:uniq, questions, nlp:null };
-  }
-  return { ok:true, provider:NLP_PROVIDER, proposal:[], missing:[], questions:[], nlp:null };
-}
-
-/* ---------------- Plan & Execute ---------------- */
-app.post('/api/plan/from-text', async (req,res)=>{
-  try{ const { text } = req.body||{}; const plan = await planFromText(text); res.json(plan); }
-  catch(e){ console.error(e); res.status(500).json({ ok:false, error:'PLAN_FAILED' }); }
-});
-
-/** runPipeline with dryRun:
- *  - dryRun=false (ברירת מחדל): מריץ טריגר(ים) ואז אקשנים.
- *  - dryRun=true: מריץ רק טריגרים, מחזיר ספירת פריטים + sample, לא מבצע אקשנים.
- */
-async function runPipeline(steps, { dryRun=false } = {}){
-  let items = null;
-  let actionsExecuted = 0;
-  for (const step of steps){
-    if (step.trigger){
-      const { type, params } = step.trigger;
-      if (type === 'gmail.unreplied') items = await triggerGmailUnreplied(params);
-      else if (type === 'gmail.from') items = await triggerGmailFrom(params);
-      else if (type === 'sheets.match') items = await triggerSheetsMatch(params);
-      else throw new Error(`Unknown trigger: ${type}`);
-    } else if (step.action){
-      if (dryRun) continue; // מדלגים על אקשנים ב-Dry-Run
-      const { type, params } = step.action;
-      if (type === 'sheets.append'){ if (!items) items=[{}]; await actionSheetsAppend(params, items); actionsExecuted++; }
-      else if (type === 'whatsapp.send'){ await actionWhatsappSend(params, items||[]); actionsExecuted++; }
-      else if (type === 'email.send'){ await actionEmailSend(params, items||[]); actionsExecuted++; }
-      else if (type === 'slack.send'){ await actionSlackSend(params, items||[]); actionsExecuted++; }
-      else if (type === 'telegram.send'){ await actionTelegramSend(params, items||[]); actionsExecuted++; }
-      else if (type === 'webhook.call'){ await actionWebhookCall(params, items||[]); actionsExecuted++; }
-      else throw new Error(`Unknown action: ${type}`);
+      if (items.length >= (p.limit || 50)) break;
     }
+    return items;
   }
-  if (dryRun) return { ok:true, dryRun:true, count: (items||[]).length, sample: (items||[]).slice(0,5) };
-  return { ok:true, dryRun:false, actionsExecuted };
+
+  if (type === "sheets.match") {
+    const sheets = await getSheets();
+    const sid = p.spreadsheetId;
+    const sn = p.sheetName || "Sheet1";
+    if (!sid) throw new Error("SPREADSHEET_ID_REQUIRED");
+    const resp = await sheets.spreadsheets.values.get({ spreadsheetId: sid, range: `${sn}!A:Z` });
+    const rows = resp.data.values || [];
+    const headers = rows[0] || [];
+    const idx = headers.findIndex((h) => (h || "").toString().trim().toLowerCase() === (p.columnName || "").toString().trim().toLowerCase());
+    if (idx === -1) return [];
+    const items = [];
+    for (let r = 1; r < rows.length; r++) {
+      const row = rows[r] || [];
+      const val = (row[idx] || "").toString();
+      if (p.equals ? val === p.equals : !!val) {
+        items.push({
+          __sheet: sn,
+          __rowAsText: row.join(" | "),
+          values: row,
+        });
+      }
+    }
+    return items;
+  }
+
+  return [];
 }
 
-app.post('/api/automations/execute', async (req,res)=>{
-  try{
-    const { text, steps, dryRun=false } = req.body||{};
-    let finalSteps = Array.isArray(steps) && steps.length ? steps : null;
-    let missing = [];
-    if (!finalSteps){ const plan = await planFromText(text); finalSteps = plan.proposal||[]; missing = plan.missing||[]; }
-    if (missing.length) return res.status(400).json({ ok:false, error:'MISSING_FIELDS', missing });
-    if (!finalSteps?.length) return res.status(400).json({ ok:false, error:'NO_STEPS_BUILT' });
-    const result = await runPipeline(finalSteps, { dryRun: !!dryRun });
-    res.json({ ok:true, result, steps:finalSteps, provider:NLP_PROVIDER });
-  }catch(e){ console.error(e); res.status(500).json({ ok:false, error:'EXECUTION_FAILED' }); }
-});
+async function execAction(action, item, ctx) {
+  const type = action.type;
+  const p = action.params || {};
+  const dry = !!ctx.dryRun;
 
-/* ---------------- Saved Automations ---------------- */
-function genId(){ return 'a_' + Math.random().toString(36).slice(2,10); }
-async function getAutosDB(){ return (await kvGet('autosByUser')) || {}; }
-async function setAutosDB(db){ await kvSet('autosByUser', db||{}); }
-
-app.get('/api/automations/list', async (req,res)=>{
-  const email = await getCurrentUserEmail(); if(!email) return res.status(401).json({ ok:false, error:'NOT_AUTHENTICATED' });
-  const db = await getAutosDB(); const mine = Object.values(db[email]||{}); res.json({ ok:true, items: mine });
-});
-app.post('/api/automations/save', async (req,res)=>{
-  try{
-    const email = await getCurrentUserEmail(); if(!email) return res.status(401).json({ ok:false, error:'NOT_AUTHENTICATED' });
-    const { id, steps, text, title } = req.body||{};
-    if(!Array.isArray(steps) || !steps.length) return res.status(400).json({ ok:false, error:'BAD_DEFINITION' });
-    const db = await getAutosDB(); db[email] ||= {};
-    const autoId = id || genId();
-    db[email][autoId] = { id:autoId, title: title||'אוטומציה ללא שם', text: text||'', steps, owner:email, updatedAt:Date.now() };
-    await setAutosDB(db); res.json({ ok:true, id:autoId });
-  }catch(e){ console.error(e); res.status(500).json({ ok:false, error:'SAVE_FAILED' }); }
-});
-app.delete('/api/automations/:id', async (req,res)=>{
-  try{
-    const email = await getCurrentUserEmail(); if(!email) return res.status(401).json({ ok:false, error:'NOT_AUTHENTICATED' });
-    const id = req.params.id; const db = await getAutosDB(); if (db[email]?.[id]) { delete db[email][id]; await setAutosDB(db); }
-    res.json({ ok:true });
-  }catch(e){ console.error(e); res.status(500).json({ ok:false, error:'DELETE_FAILED' }); }
-});
-app.post('/api/automations/execute-saved', async (req,res)=>{
-  try{
-    const email = await getCurrentUserEmail(); if(!email) return res.status(401).json({ ok:false, error:'NOT_AUTHENTICATED' });
-    const { id } = req.body||{}; const db = await getAutosDB(); const auto = db[email]?.[id];
-    if(!auto) return res.status(404).json({ ok:false, error:'NOT_FOUND' });
-    const result = await runPipeline(auto.steps, { dryRun:false });
-    res.json({ ok:true, result });
-  }catch(e){ console.error(e); res.status(500).json({ ok:false, error:'EXEC_SAVED_FAILED' }); }
-});
-
-/* ---------------- Triggers ---------------- */
-async function triggerGmailUnreplied(params){
-  const { fromEmail, newerThanDays=30, hours=10, limit=50 } = params||{};
-  if(!fromEmail) throw new Error('fromEmail is required');
-  const gmail = await getGmailClient(); const profile = await gmail.users.getProfile({userId:'me'}); const myEmail = profile.data.emailAddress;
-  const q = [`from:${fromEmail}`, `newer_than:${newerThanDays}d`, '-in:chats'].join(' ');
-  const list = await gmail.users.messages.list({ userId:'me', q, maxResults: Math.min(limit,100) });
-  const msgs = list.data.messages||[]; const thresholdMs = hours*60*60*1000; const now=Date.now(); const out=[];
-  for(const m of msgs){
-    const th = await gmail.users.threads.get({ userId:'me', id:m.threadId });
-    const messages = th.data.messages||[]; const lastMsg = messages[messages.length-1];
-    const headers = Object.fromEntries((lastMsg.payload.headers||[]).map(h=>[h.name.toLowerCase(),h.value]));
-    const from = headers['from']||'', subject=headers['subject']||'', internalDate = parseInt(lastMsg.internalDate||'0',10);
-    const ageMs = now - internalDate; const isFromMe = (headers['from']||'').toLowerCase().includes(myEmail.toLowerCase());
-    if (isFromMe) continue;
-    const replied = messages.some(msg=> {
-      const h = Object.fromEntries((msg.payload.headers||[]).map(x=>[x.name.toLowerCase(),x.value])); const f = h['from']||''; return f.toLowerCase().includes(myEmail.toLowerCase());
+  if (type === "sheets.append") {
+    const sid = p.spreadsheetId;
+    const sn = p.sheetName || "Sheet1";
+    if (!sid) throw new Error("SPREADSHEET_ID_REQUIRED");
+    const rowTmpl = p.row || {};
+    // Render template with item
+    const render = (s) => String(s || "").replace(/\{\{\s*item\.([a-zA-Z0-9_]+)\s*\}\}/g, (_, k) => (item && item[k] != null ? String(item[k]) : ""));
+    const row = Object.keys(rowTmpl).map((k) => render(rowTmpl[k]));
+    if (dry) return { ok: true, dry: true, appended: row };
+    const sheets = await getSheets();
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: sid,
+      range: `${sn}!A:Z`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: { values: [row] },
     });
-    if (replied) continue; if (ageMs < thresholdMs) continue;
-    const threadId = th.data.id; const webLink = `https://mail.google.com/mail/u/0/#inbox/${threadId}`; const dateIso = new Date(internalDate).toISOString();
-    out.push({ from, subject, date:dateIso, threadId, webLink, snippet:lastMsg.snippet||'' });
+    return { ok: true, appended: row };
   }
-  return out;
-}
-function parseAddress(str=''){ const m=str.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/); return m?m[0]:str; }
-function extractPlainText(payload){ if(!payload) return '';
-  const mime=payload.mimeType||''; if(mime==='text/plain' && payload.body?.data){ try{ return Buffer.from(payload.body.data,'base64').toString('utf8'); }catch{ return ''; } }
-  if(payload.parts && Array.isArray(payload.parts)){ for(const p of payload.parts){ const got=extractPlainText(p); if(got) return got; } } return ''; }
-async function triggerGmailFrom(params){
-  const { fromEmails, newerThanDays=30, limit=100 } = params||{}; if(!fromEmails) throw new Error('fromEmails is required (comma-separated)');
-  const gmail = await getGmailClient(); const addrs = fromEmails.split(',').map(s=>s.trim()).filter(Boolean);
-  const qFrom = addrs.map(a=>`from:${a}`).join(' OR '); const q = [`(${qFrom})`, `newer_than:${newerThanDays}d`, '-in:chats'].join(' ');
-  const key = `gmail:from:${addrs.join('|')}`; const lastTs = (await kvGet(key)) || 0;
-  const list = await gmail.users.messages.list({ userId:'me', q, maxResults: Math.min(limit,100) }); const msgs=list.data.messages||[];
-  const out=[]; let maxTs = lastTs;
-  for(const m of msgs){
-    const full = await gmail.users.messages.get({ userId:'me', id:m.id, format:'full' }); const msg=full.data;
-    const headers = Object.fromEntries((msg.payload.headers||[]).map(h=>[h.name.toLowerCase(),h.value]));
-    const from=headers['from']||'', subject=headers['subject']||'', internalDate=parseInt(msg.internalDate||'0',10); if(internalDate<=lastTs) continue; if(internalDate>maxTs) maxTs=internalDate;
-    const threadId=msg.threadId, webLink=`https://mail.google.com/mail/u/0/#inbox/${threadId}`, dateIso=new Date(internalDate).toISOString(); const body = extractPlainText(msg.payload)||'';
-    out.push({ from: parseAddress(from), subject, date:dateIso, snippet:msg.snippet||'', body, threadId, webLink });
+
+  if (type === "email.send") {
+    const mailer = getMailer();
+    if (!mailer) return { ok: false, error: "SMTP_NOT_CONFIGURED" };
+    const to = p.to || "";
+    const subject = (p.subject || "").replace(/\{\{\s*item\.([a-zA-Z0-9_]+)\s*\}\}/g, (_, k) => item?.[k] || "");
+    const body = (p.body || "").replace(/\{\{\s*item\.([a-zA-Z0-9_]+)\s*\}\}/g, (_, k) => item?.[k] || "");
+    if (dry) return { ok: true, dry: true, to, subject, body };
+    await mailer.sendMail({ from: process.env.SMTP_USER, to, subject, text: body });
+    return { ok: true, to, subject };
   }
-  if (maxTs > lastTs) await kvSet(key, maxTs);
-  return out;
+
+  if (type === "whatsapp.send") {
+    if (!twilioClient) return { ok: false, error: "TWILIO_NOT_CONFIGURED" };
+    const to = p.to?.startsWith("whatsapp:") ? p.to : "whatsapp:" + (p.to || "");
+    const from = process.env.TWILIO_WHATSAPP_FROM;
+    const message = (p.message || "").replace(/\{\{\s*item\.([a-zA-Z0-9_]+)\s*\}\}/g, (_, k) => item?.[k] || "");
+    if (dry) return { ok: true, dry: true, to, message };
+    const res = await twilioClient.messages.create({ from, to, body: message });
+    return { ok: true, sid: res.sid };
+  }
+
+  if (type === "slack.post") {
+    const url = p.webhookUrl;
+    const message = (p.message || "").replace(/\{\{\s*item\.([a-zA-Z0-9_]+)\s*\}\}/g, (_, k) => item?.[k] || "");
+    if (dry) return { ok: true, dry: true, to: "slack.webhook", message };
+    if (!url) return { ok: false, error: "SLACK_WEBHOOK_REQUIRED" };
+    const resp = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: message }) });
+    return { ok: resp.ok };
+  }
+
+  if (type === "telegram.send") {
+    const token = p.botToken, chatId = p.chatId;
+    const message = (p.message || "").replace(/\{\{\s*item\.([a-zA-Z0-9_]+)\s*\}\}/g, (_, k) => item?.[k] || "");
+    if (dry) return { ok: true, dry: true, to: "telegram", message };
+    if (!token || !chatId) return { ok: false, error: "TELEGRAM_CONFIG_REQUIRED" };
+    const url = `https://api.telegram.org/bot${token}/sendMessage`;
+    const resp = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: chatId, text: message }) });
+    const jj = await resp.json();
+    return { ok: resp.ok, details: jj };
+  }
+
+  if (type === "webhook.post") {
+    const url = p.url, method = p.method || "POST", json = p.json || {};
+    const rendered = JSON.parse(JSON.stringify(json).replace(/\{\{\s*item\.([a-zA-Z0-9_]+)\s*\}\}/g, (_, k) => item?.[k] || ""));
+    if (dry) return { ok: true, dry: true, url, method, json: rendered };
+    const resp = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(rendered) });
+    const txt = await resp.text();
+    return { ok: resp.ok, status: resp.status, body: txt.slice(0, 1000) };
+  }
+
+  return { ok: false, error: "UNKNOWN_ACTION" };
 }
-async function triggerSheetsMatch(params){
-  const { spreadsheetId, sheetName='Sheet1', columnName, equals, mode='new' } = params||{};
-  if(!spreadsheetId) throw new Error('spreadsheetId is required'); if(!columnName) throw new Error('columnName is required');
-  const sheets = await getSheetsClient();
-  const effectiveId = extractSpreadsheetId(spreadsheetId)||spreadsheetId;
-  const range = `${sheetName}!A:ZZ`; const resp = await sheets.spreadsheets.values.get({ spreadsheetId:effectiveId, range });
-  const values = resp.data.values || []; if(!values.length) return [];
-  const header = values[0]; const rows = values.slice(1);
-  const colIndex = header.findIndex(h => (h||'').trim().toLowerCase() === String(columnName).trim().toLowerCase());
-  if (colIndex === -1) throw new Error(`column "${columnName}" not found`);
-  const stateKey = `sheet:${effectiveId}:${sheetName}:lastRow`; let lastRow = (await kvGet(stateKey)) ?? 1; const startIdx = Math.max(0, lastRow - 1);
-  const out=[]; for(let i=startIdx;i<rows.length;i++){
-    const r=rows[i]; const val=(r[colIndex]||'').trim();
-    if (val === String(equals).trim()){
-      const obj={}; header.forEach((h,idx)=>obj[h||`col_${idx+1}`]=r[idx]??'');
-      obj.__rowIndex = i+2; obj.__sheet = sheetName;
-      obj.__rowAsText = header.map((h,idx)=>`${h||`col_${idx+1}`}: ${r[idx]??''}`).join(' | ');
-      out.push(obj);
+
+app.post("/api/automations/execute", async (req, res) => {
+  try {
+    const steps = req.body?.steps || [];
+    const dryRun = !!req.body?.dryRun;
+
+    // execute trigger(s)
+    const trig = steps.find((s) => s.trigger)?.trigger;
+    if (!trig) return res.json({ ok: false, error: "NO_TRIGGER" });
+    const items = await execTrigger(trig);
+
+    const actions = steps.filter((s) => s.action).map((s) => s.action);
+    const results = [];
+    for (const item of items) {
+      for (const act of actions) {
+        // eslint-disable-next-line no-await-in-loop
+        const r = await execAction(act, item, { dryRun });
+        results.push({ item, action: act.type, result: r });
+      }
     }
+    res.json({ ok: true, itemsCount: items.length, results });
+  } catch (e) {
+    res.json({ ok: false, error: "EXEC_FAILED", details: String(e) });
   }
-  if (mode === 'new'){ const absoluteLastRow = rows.length + 1; await kvSet(stateKey, absoluteLastRow); }
-  return out;
+});
+
+// ================== Automations storage ==================
+function autosFile() {
+  return path.join(DATA_DIR, "automations.json");
+}
+function loadAutos() {
+  const f = autosFile();
+  return fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : [];
+}
+function saveAutos(items) {
+  fs.writeFileSync(autosFile(), JSON.stringify(items, null, 2));
 }
 
-/* ---------------- Actions ---------------- */
-async function actionSheetsAppend(params, items){
-  const { spreadsheetId, sheetName='Sheet1', row } = params||{}; if(!spreadsheetId) throw new Error('spreadsheetId is required');
-  const sheets = await getSheetsClient(); const effectiveId = extractSpreadsheetId(spreadsheetId)||spreadsheetId;
-  const values = (items||[]).map((item)=>{ const rendered={}; for(const [k,v] of Object.entries(row||{})) rendered[k]=String(v).replace(/\{\{item\.([a-zA-Z0-9_]+)\}\}/g,(_,key)=>item[key]??''); return Object.values(rendered); });
-  await sheets.spreadsheets.values.append({ spreadsheetId:effectiveId, range:`${sheetName}!A1`, valueInputOption:'USER_ENTERED', requestBody:{ values } });
-}
-async function actionWhatsappSend(params, items){
-  if(!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_WHATSAPP_FROM){ console.warn('Twilio not configured'); return; }
-  const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
-  let to = params?.to || TWILIO_WHATSAPP_TO || ''; let from = TWILIO_WHATSAPP_FROM || '';
-  to = normalizeWhatsApp(to); from = normalizeWhatsApp(from);
-  if(!to || !from || !looksLikeIntlPhone(to) || !looksLikeIntlPhone(from)) throw new Error('TWILIO_INVALID_PHONE');
-  const text = (params?.message || 'Hello').replace(/\{\{item\.([a-zA-Z0-9_]+)\}\}/g,(_,k)=>items?.[0]?.[k]??'');
-  await client.messages.create({ from:`whatsapp:${from}`, to:`whatsapp:${to}`, body:text });
-}
-function encodeMessage(str){ return Buffer.from(str).toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
-async function actionEmailSend(params, items){
-  const gmail = await getGmailClient(); const to = params?.to || ''; if(!to) throw new Error('EMAIL_TO_MISSING');
-  const subjectTpl = params?.subject || 'התראה חדשה'; const bodyTpl = params?.body || '{{item.__rowAsText}}';
-  for(const item of (items||[])){
-    const subject = subjectTpl.replace(/\{\{item\.([a-zA-Z0-9_]+)\}\}/g,(_,k)=>item[k]??'');
-    const body    = bodyTpl.replace(/\{\{item\.([a-zA-Z0-9_]+)\}\}/g,(_,k)=>item[k]??'');
-    const raw = `To: ${to}\nSubject: ${subject}\nContent-Type: text/plain; charset="UTF-8"\n\n${body}\n`;
-    await gmail.users.messages.send({ userId:'me', requestBody:{ raw: encodeMessage(raw) } });
+app.post("/api/automations/save", async (req, res) => {
+  try {
+    const items = loadAutos();
+    const id = uuidv4();
+    const now = new Date().toISOString();
+    const row = { id, title: req.body?.title || "Untitled", steps: req.body?.steps || [], text: req.body?.text || "", createdAt: now, updatedAt: now };
+    items.push(row);
+    saveAutos(items);
+    res.json({ ok: true, id });
+  } catch (e) {
+    res.json({ ok: false, error: "SAVE_FAILED" });
   }
-}
-async function actionSlackSend(params, items){
-  if(!SLACK_WEBHOOK_URL){ console.warn('Slack webhook not configured'); return; }
-  const text = (params?.message||'Automation notification').replace(/\{\{item\.([a-zA-Z0-9_]+)\}\}/g,(_,k)=>items?.[0]?.[k]??'');
-  await fetchFn(SLACK_WEBHOOK_URL,{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ text }) });
-}
-async function actionTelegramSend(params, items){
-  if(!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID){ console.warn('Telegram not configured'); return; }
-  const message=(params?.message||'Automation message').replace(/\{\{item\.([a-zA-Z0-9_]+)\}\}/g,(_,k)=>items?.[0]?.[k]??'');
-  const url=`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
-  await fetchFn(url,{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: message }) });
-}
-async function actionWebhookCall(params, items){
-  const url=params?.url || WEBHOOK_URL; if(!url){ console.warn('Webhook URL missing'); return; }
-  const body={ timestamp:new Date().toISOString(), items: items||[], context: params?.context||{} };
-  await fetchFn(url,{ method: params?.method||'POST', headers:{'Content-Type':'application/json', ...(params?.headers||{})}, body: JSON.stringify(body) });
-}
+});
 
-/* ---------------- Start ---------------- */
-app.listen(PORT, ()=>{ console.log(`Server :${PORT} | PUBLIC_DIR=${PUBLIC_DIR} | TOKEN_STORE=${TOKEN_STORE} | NLP=${NLP_PROVIDER} | MODEL=${GROQ_MODEL}`); });
+app.get("/api/automations/list", async (req, res) => {
+  try {
+    const items = loadAutos();
+    res.json({ ok: true, items });
+  } catch {
+    res.json({ ok: false, items: [] });
+  }
+});
+
+app.post("/api/automations/execute-saved", async (req, res) => {
+  try {
+    const id = String(req.body?.id || "");
+    const items = loadAutos();
+    const it = items.find((x) => x.id === id);
+    if (!it) return res.json({ ok: false, error: "NOT_FOUND" });
+    // Reuse execution path
+    const fakeReq = { body: { steps: it.steps, dryRun: false } };
+    const fakeRes = { json: (x) => x };
+    // Direct call (not nice but simple)
+    const trig = it.steps.find((s) => s.trigger)?.trigger;
+    const actions = it.steps.filter((s) => s.action).map((s) => s.action);
+    const itemsList = await execTrigger(trig);
+    const results = [];
+    for (const item of itemsList) {
+      for (const act of actions) {
+        // eslint-disable-next-line no-await-in-loop
+        const r = await execAction(act, item, { dryRun: false });
+        results.push({ item, action: act.type, result: r });
+      }
+    }
+    res.json({ ok: true, itemsCount: itemsList.length, results });
+  } catch (e) {
+    res.json({ ok: false, error: "EXEC_SAVED_FAILED", details: String(e) });
+  }
+});
+
+// -------------- start --------------
+app.listen(PORT, () => {
+  console.log("Server on http://localhost:" + PORT, " static:", PUBLIC_DIR);
+});
