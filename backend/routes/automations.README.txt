@@ -1,1 +1,0 @@
-// (No change required if your routes/automations.js already supports external registry and 'proposal.steps').

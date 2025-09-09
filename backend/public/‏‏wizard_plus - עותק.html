@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <title>Wizard Plus</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .fade-in{animation:fade .25s ease}@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+    .bubble{background:#0b1323;border:1px solid #273244;color:#e5e7eb}.bubble.user{background:#121a2b}
+    .btn{appearance:none;border:none;border-radius:12px;padding:12px 16px;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-weight:700;box-shadow:0 10px 18px rgba(0,0,0,.15),inset 0 -3px 0 rgba(0,0,0,.15);cursor:pointer}
+    .btn:hover{filter:brightness(.97)}.btn-ghost{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px 14px;color:#374151;font-weight:600}
+    .pill{display:inline-flex;gap:8px;align-items:center;padding:6px 10px;border-radius:999px;border:1px solid #37415133;font-size:12px;font-weight:600}
+    .pill-ok{background:rgba(16,185,129,.12);border-color:rgba(16,185,129,.3);color:#0bb37b}.pill-err{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.35);color:#ef4444}
+    .chat-input{background:#fff;color:#111827;border:1px solid #e5e7eb}
+    .card{background:#fff;color:#111827;border:1px solid #e5e7eb;border-radius:16px;box-shadow:0 8px 18px rgba(0,0,0,.06)}
+    .chip{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;border:1px solid #e5e7eb;background:#fff;cursor:pointer}.chip:hover{background:#f7f7fb}
+    .tag{font-size:11px;padding:2px 8px;border-radius:999px;background:#eef2ff;color:#3730a3}.section-title{font-weight:800;color:#111827}
+    .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
+    /* Toast */
+    #toast{position:fixed;bottom:18px;left:18px;z-index:50;display:none}
+    #toast.show{display:block}
+  </style>
+</head>
+<body class="min-h-screen bg-gray-100 text-gray-100 flex">
+  <!-- Sidebar -->
+  <aside class="w-64 bg-white text-gray-800 shadow-lg p-6 hidden md:flex md:flex-col">
+    <h2 class="text-xl font-bold mb-4">📂 האוטומציות שלי</h2>
+    <div class="mb-3"><input id="autos-search" class="w-full chat-input rounded-xl p-2" placeholder="חיפוש לפי שם…"></div>
+    <ul id="autos-list" class="space-y-3 overflow-auto" style="max-height:55vh;">
+      <li class="p-3 rounded-lg border">טוען…</li>
+    </ul>
+    <div class="mt-4 text-xs text-gray-400">Prototype • 0.5</div>
+  </aside>
+
+  <!-- Main -->
+  <main class="flex-1 p-6 md:p-10">
+    <header class="flex items-center justify-between mb-6">
+      <h1 class="text-2xl font-bold text-gray-800">✨ צור אוטומציה חדשה</h1>
+      <div class="flex items-center gap-3">
+        <span id="g-status" class="pill">טוען…</span>
+        <span id="g-email" class="text-sm text-gray-500"></span>
+        <button id="btn-g-connect" class="btn">🔑 התחבר עם Google</button>
+        <button id="btn-g-disconnect" class="btn-ghost">התנתק</button>
+      </div>
+    </header>
+
+    <!-- Composer -->
+    <section class="card p-6 max-w-4xl">
+      <div class="flex items-center justify-between">
+        <div>
+          <div class="section-title">תאר מה אתה צריך</div>
+          <div class="text-gray-500 text-sm">אפשר בעברית, גם עם שגיאות. אשלים פרטים חסרים.</div>
+        </div>
+        <div class="text-xs text-gray-500"><span id="nlp-provider" class="tag">NLP: —</span></div>
+      </div>
+      <textarea id="free-text" class="w-full h-36 border rounded-xl p-4 outline-none focus:ring-2 focus:ring-blue-300 my-4"
+        placeholder='דוגמה: "כל מייל מ-haim@example.com שלא נענה 10 שעות ב-30 ימים → הוסף ל-Google Sheet בשם InboxLog"'></textarea>
+      <div class="flex flex-wrap gap-3">
+        <button id="btn-create" class="btn">🚀 צור/עדכן תכנית</button>
+        <button id="btn-debug-nlp" class="btn-ghost">בדיקת NLP</button>
+        <label class="flex items-center gap-2 text-sm text-gray-600">
+          <input id="chk-dry" type="checkbox" class="rounded">
+          הרצה ניסיונית (Dry-Run)
+        </label>
+      </div>
+    </section>
+
+    <!-- Understood Card -->
+    <section id="understood" class="mt-6 card p-6 max-w-4xl hidden">
+      <div class="section-title mb-3">הבנתי אותך</div>
+      <div id="understood-text" class="text-gray-700"></div>
+      <div id="understood-chips" class="mt-3 flex flex-wrap gap-2"></div>
+      <div class="mt-4 flex gap-3">
+        <button id="btn-open-review" class="btn-ghost">פתח עריכה</button>
+        <button id="btn-run-now" class="btn">הרץ עכשיו</button>
+      </div>
+    </section>
+
+    <!-- Suggested -->
+    <section class="mt-6 card p-6 max-w-4xl">
+      <div class="section-title mb-3">אוטומציות מוצעות</div>
+      <div id="suggested" class="flex flex-wrap gap-2"></div>
+      <div class="text-xs text-gray-500 mt-2">לחיצה מכניסה טקסט לדוגמה ומתחילה איסוף פרטים.</div>
+    </section>
+
+    <!-- Chat -->
+    <section class="mt-6"><div id="chat" class="space-y-3"></div></section>
+
+    <!-- Dynamic Form (missing) -->
+    <section id="missing-form" class="mt-6 card p-6 max-w-4xl hidden">
+      <div class="section-title mb-3">צריך להשלים כמה פרטים</div>
+      <form id="form-missing" class="grid gap-3 md:grid-cols-2"></form>
+      <div class="mt-3 flex gap-3">
+        <button id="btn-missing-continue" class="btn">המשך</button>
+        <button id="btn-missing-cancel" class="btn-ghost" type="button">ביטול</button>
+      </div>
+    </section>
+
+    <!-- Review & Edit -->
+    <section id="review" class="mt-6 card p-6 max-w-4xl hidden">
+      <div class="section-title mb-3">עריכה לפני הרצה</div>
+      <div id="review-steps" class="space-y-4"></div>
+      <div class="mt-4 flex gap-3">
+        <button id="btn-run-reviewed" class="btn">הרץ עם העריכות</button>
+        <button id="btn-save-automation" class="btn-ghost">שמור כאוטומציה</button>
+      </div>
+    </section>
+
+    <!-- Defaults -->
+    <section class="mt-6 card p-4 max-w-4xl">
+      <div class="text-sm text-gray-700 mb-2">ברירות־מחדל (נשמרות מקומית בדפדפן)</div>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <input id="def_spreadsheetId" class="chat-input rounded-xl p-2" placeholder="Spreadsheet ID או URL מלא">
+        <input id="def_sheetName" class="chat-input rounded-xl p-2" placeholder="Sheet name">
+        <input id="def_to" class="chat-input rounded-xl p-2" placeholder="יעד: name@example.com או 9725xxxxxxx">
+      </div>
+      <div class="mt-2"><button id="btn-save-defaults" class="btn-ghost">שמור ברירות־מחדל</button></div>
+    </section>
+  </main>
+
+  <!-- Toast -->
+  <div id="toast" class="card px-4 py-3 text-sm text-gray-800"></div>
+
+<script>
+const API_BASE = "";
+const esc = (s="") => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const mono = (obj)=> `<pre class="text-xs mt-2"><code>${esc(JSON.stringify(obj,null,2))}</code></pre>`;
+function toast(msg){ const t=document.getElementById("toast"); t.textContent=msg; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"), 2200); }
+
+function normalizeHebClient(s=""){
+  return String(s).replace(/[\u200e\u200f]/g,"").replace(/[“”„״]/g,'"').replace(/[’׳]/g,"'")
+  .replace(/[–—]/g,"-").replace(/ו?וואטסאפ|ווטסאפ/gi,"WhatsApp").replace(/גוגל\s*שיט|שיט|גיליון/gi,"Sheet")
+  .replace(/\bבשם\s+/gi,"").replace(/\s+/g," ").trim();
+}
+
+/* Google auth status */
+function setGoogleStatus(connected,email){ const s=document.getElementById("g-status"); s.textContent=connected?"מחובר":"לא מחובר"; s.className="pill "+(connected?"pill-ok":"pill-err"); document.getElementById("g-email").textContent=connected&&email?`(${email})`:""; }
+async function refreshGoogleAccount(){
+  try{
+    const st=await (await fetch("/api/google/auth/status")).json();
+    if(st?.hasRefreshToken){ try{ const me=await (await fetch("/api/google/me")).json(); setGoogleStatus(true, me?.emailAddress||""); }catch{ setGoogleStatus(true,""); } }
+    else setGoogleStatus(false,"");
+  }catch{ setGoogleStatus(false,""); }
+}
+async function connectGoogle(){ const j=await (await fetch("/api/google/oauth/url")).json(); if(j?.url){ window.open(j.url,"google_auth","width=520,height=640"); } else toast("שגיאה ביצירת קישור גוגל"); }
+async function disconnectGoogle(){ await fetch("/api/google/logout",{method:"POST"}); refreshGoogleAccount(); }
+
+/* Defaults */
+function getDefaults(){ try{return JSON.parse(localStorage.getItem("defaults")||"{}")}catch{return{}} }
+function setDefault(k,v){ const d=getDefaults(); d[k]=v; localStorage.setItem("defaults", JSON.stringify(d)); }
+function getDefault(k){ return getDefaults()[k]||""; }
+function loadDefaults(){ ["spreadsheetId","sheetName","to"].forEach(k=>{ const el=document.getElementById("def_"+k); if(el) el.value=getDefault(k); }); }
+function saveDefaults(){ ["spreadsheetId","sheetName","to"].forEach(k=>{ const el=document.getElementById("def_"+k); if(el) setDefault(k,(el.value||"").trim()); }); toast("נשמרו ברירות־מחדל"); }
+
+/* Suggested */
+const SUGGESTED = [
+  { title:"מיילים שלא נענו → WhatsApp", tag:"Gmail→WA", text:"כל מייל מ-name@example.com שלא נענה במשך 10 שעות ב-30 ימים האחרונים — שלח לי הודעת WhatsApp עם הנושא וקישור לשיחה" },
+  { title:"שני שולחים → לוג בגיליון", tag:"Gmail→Sheets", text:"אני רוצה טבלה לשני אנשים; כל פעם שאחד מהם שולח מייל—להוסיף שורה עם השולח, התאריך, הנושא, והתוכן" },
+  { title:"תאימות ערך בגיליון → מייל", tag:"Sheets→Email", text:'כשהעמודה "project menger" שווה "haim shafir" בלשונית Sheet1 — שלח לי את כל השורה במייל' },
+];
+function renderSuggested(){
+  const wrap=document.getElementById("suggested"); wrap.innerHTML="";
+  SUGGESTED.forEach(s=>{ const d=document.createElement("div"); d.className="chip"; d.innerHTML=`<span>${esc(s.title)}</span><span class="tag">${esc(s.tag)}</span>`; d.onclick=()=>{ document.getElementById("free-text").value=s.text; planFromText(s.text); }; wrap.appendChild(d); });
+}
+
+/* Chat helpers */
+function addBubble(html,who="sys"){ const chat=document.getElementById("chat"); const wrap=document.createElement("div"); wrap.className="fade-in flex "+(who==="user"?"justify-end":"justify-start"); const b=document.createElement("div"); b.className="bubble rounded-2xl px-4 py-3 max-w-[820px] "+(who==="user"?"user":""); b.innerHTML=html; wrap.appendChild(b); chat.appendChild(wrap); b.scrollIntoView({behavior:"smooth",block:"end"}); return b; }
+function updateProviderTag(p){ document.getElementById("nlp-provider").textContent="NLP: "+(p||"—"); }
+
+/* Understood card */
+function setUnderstood(summary, chips){
+  const box=document.getElementById("understood"); const t=document.getElementById("understood-text"); const c=document.getElementById("understood-chips");
+  t.innerHTML=summary; c.innerHTML=""; (chips||[]).forEach(ch=>{ const span=document.createElement("span"); span.className="chip"; span.textContent=ch.label; span.title="לחץ לעריכה"; span.onclick=()=>{ document.getElementById("missing-form").classList.remove("hidden"); document.querySelector(`#form-missing [name="${ch.key}"]`)?.focus(); }; c.appendChild(span); });
+  box.classList.remove("hidden");
+}
+
+/* Missing form */
+let lastPlan=null, lastStepsEditable=[];
+function renderMissingForm(missing){
+  const form=document.getElementById("form-missing"); form.innerHTML="";
+  (missing||[]).forEach(m=>{
+    const lab=document.createElement("label"); lab.className="text-sm";
+    lab.innerHTML=`<div class="text-gray-600 mb-1">${esc(m.label||m.key)}</div>
+      <input class="chat-input w-full rounded-lg p-2" name="${esc(m.key)}" placeholder="${esc(m.example||"")}" />`;
+    form.appendChild(lab);
+  });
+  // preload defaults
+  (missing||[]).forEach(m=>{
+    const el=form.querySelector(`[name="${CSS.escape(m.key)}"]`);
+    if(!el) return;
+    const d=getDefault(m.key); if(d) el.value=d;
+  });
+  document.getElementById("missing-form").classList.toggle("hidden", !(missing||[]).length);
+}
+
+/* Review & Edit */
+function buildReviewEditor(steps){
+  const host=document.getElementById("review-steps"); host.innerHTML=""; document.getElementById("review").classList.remove("hidden");
+  lastStepsEditable=JSON.parse(JSON.stringify(steps||[]));
+  (lastStepsEditable||[]).forEach((s,idx)=>{
+    const isTrig=!!s.trigger; const name=isTrig?s.trigger.type:s.action.type; const params=isTrig?(s.trigger.params||{}):(s.action.params||{});
+    const card=document.createElement("div"); card.className="border rounded-xl p-4";
+    let html=`<div class="font-bold mb-2">${isTrig?"Trigger":"Action"}: <span class="mono">${esc(name)}</span></div><div class="grid md:grid-cols-2 gap-3">`;
+    Object.keys(params).forEach(k=>{ const v=params[k]; html+=`<label class="text-sm"><div class="text-gray-600 mb-1">${esc(k)}</div><input data-idx="${idx}" data-kind="${isTrig?"trigger":"action"}" data-key="${esc(k)}" class="chat-input w-full rounded-lg p-2" value="${esc(String(v))}" /></label>`; });
+    html+="</div>"; card.innerHTML=html; host.appendChild(card);
+  });
+}
+function collectReviewedSteps(){
+  document.querySelectorAll('#review-steps input[data-key]').forEach(el=>{ const idx=+el.dataset.idx, kind=el.dataset.kind, key=el.dataset.key, val=el.value; if(kind==="trigger") lastStepsEditable[idx].trigger.params[key]=val; else lastStepsEditable[idx].action.params[key]=val; });
+  return lastStepsEditable;
+}
+
+/* Apply answers → steps */
+function applyAnswersToSteps(steps,answers){
+  const patch=o=>{ if(!o||typeof o!=="object") return; for(const k of Object.keys(o)){ if(o[k]===""&&answers[k]) o[k]=answers[k]; if(typeof o[k]==="object") patch(o[k]); } };
+  (steps||[]).forEach(s=>{ if(s.trigger) patch(s.trigger.params); if(s.action) patch(s.action.params); });
+  return steps;
+}
+
+/* Planning */
+function summarizePlan(plan){
+  const trig=plan.proposal?.find(x=>x.trigger)?.trigger;
+  const act=plan.proposal?.find(x=>x.action)?.action;
+  if(!trig||!act) return "לא זוהתה כוונה.";
+  const src = trig.type==="gmail.unreplied" ? `מיילים מ-${esc(trig.params.fromEmail||"")}, שלא נענו ${+(trig.params.hours||10)} שעות`
+            : trig.type==="gmail.sent" ? `מיילים שנשלחו ע\"י ${esc((trig.params.fromEmails||[]).join(", "))||"—"}`
+            : `שורה חדשה/תאימות בגיליון ${esc(trig.params.sheetName||"Sheet1")}`;
+  const dst = act.type==="sheets.append" ? `הוספת שורה ל־Sheet ${esc(act.params.sheetName||"")}`
+            : act.type==="email.send" ? `שליחת מייל אל ${esc(act.params.to||"")}`
+            : act.type==="whatsapp.send" ? `שליחת WhatsApp אל ${esc(act.params.to||"")}`
+            : act.type==="slack.post" ? "פרסום הודעה ל-Slack"
+            : act.type==="telegram.send" ? "שליחת הודעת Telegram"
+            : "קריאת Webhook";
+  return `כש־${src} → ${dst}.`;
+}
+function chipsFromMissing(missing){ return (missing||[]).map(m=>({key:m.key,label:m.label||m.key})) }
+
+async function planFromText(textRaw){
+  const text=normalizeHebClient(textRaw||document.getElementById("free-text").value||""); if(!text){ toast("לא התקבל טקסט"); return; }
+  addBubble("🔎 מריץ /api/plan/from-text…","sys");
+  try{
+    const j=await (await fetch("/api/plan/from-text",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text})})).json();
+    lastPlan=j; updateProviderTag(j.provider||"—");
+    addBubble(`Intent: — · Provider: <code>${esc(j.provider||"—")}</code>${mono(j)}`);
+    // Understood + Missing Form
+    const understoodText=summarizePlan(j);
+    setUnderstood(understoodText, chipsFromMissing(j.missing||[]));
+    renderMissingForm(j.missing||[]);
+    if(j.proposal?.length) buildReviewEditor(j.proposal);
+  }catch(e){ toast("שגיאה בתכנון"); }
+}
+
+/* Execute */
+async function executeWithPlan(answers={}, reviewed=false){
+  if(!lastPlan || !(lastPlan.proposal||[]).length){ toast("אין תכנית פעילה"); return; }
+  let steps = reviewed ? collectReviewedSteps() : JSON.parse(JSON.stringify(lastPlan.proposal||[]));
+  steps = applyAnswersToSteps(steps, Object.assign({}, lastPlan._answers||{}, answers||{}));
+  const dry = document.getElementById("chk-dry")?.checked || false;
+  addBubble(`⚙️ מריץ /api/automations/execute${dry?" (Dry-Run)":""}…`,"sys");
+  try{
+    const j=await (await fetch("/api/automations/execute",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({steps, dryRun:dry, text:document.getElementById("free-text").value||""})})).json();
+    addBubble((j.ok?"✅ הצלחה":"❌ שגיאה")+mono(j),"sys");
+  }catch{ toast("שגיאה בהרצה"); }
+}
+
+/* Missing form handlers */
+document.getElementById("btn-missing-continue").addEventListener("click", async (e)=>{
+  e.preventDefault();
+  if(!lastPlan){ toast("אין תכנית"); return; }
+  const form=document.getElementById("form-missing");
+  const data={};
+  form.querySelectorAll("input[name]").forEach(i=>{ data[i.name]=(i.value||"").trim(); if(["spreadsheetId","sheetName","to","fromEmail","fromEmails"].includes(i.name)) setDefault(i.name, data[i.name]); });
+  // special: fromEmails CSV → array
+  if (data.fromEmails) data.fromEmails = data.fromEmails.split(",").map(s=>s.trim()).filter(Boolean);
+  lastPlan._answers = Object.assign({}, lastPlan._answers||{}, data);
+  document.getElementById("missing-form").classList.add("hidden");
+  toast("פרטים מולאו");
+});
+document.getElementById("btn-missing-cancel").addEventListener("click", ()=> document.getElementById("missing-form").classList.add("hidden"));
+
+/* Save & list */
+async function saveAutomation(){
+  if(!lastPlan){ toast("אין תכנית"); return; }
+  const title = prompt("שם לאוטומציה:", "אוטומציה חדשה") || "אוטומציה חדשה";
+  const steps = collectReviewedSteps();
+  const j=await (await fetch("/api/automations/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title, steps, text:document.getElementById("free-text").value||""})})).json();
+  if(j.ok){ toast("נשמר"); loadMyAutomations(); } else toast("שמירה נכשלה");
+}
+async function loadMyAutomations(){
+  const ul=document.getElementById("autos-list"); ul.innerHTML='<li class="p-3 rounded-lg border">טוען…</li>';
+  try{
+    const resp=await fetch("/api/automations/list");
+    if(resp.status===401){ ul.innerHTML='<li class="p-3 rounded-lg border text-gray-600">התחבר עם Google כדי לראות</li>'; return; }
+    const j=await resp.json(); if(!j.ok){ ul.innerHTML='<li class="p-3 rounded-lg border text-red-600">שגיאה בטעינה</li>'; return; }
+    const q=(document.getElementById("autos-search").value||"").toLowerCase(); ul.innerHTML="";
+    (j.items||[]).filter(x=>!q||(x.title||"").toLowerCase().includes(q)).forEach(x=>{
+      const li=document.createElement("li"); li.className="p-3 rounded-lg border"; li.innerHTML=`
+        <div class="font-semibold">${esc(x.title||"")}</div>
+        <div class="text-xs text-gray-500 mono mt-1">${esc(x.id||"")}</div>
+        <div class="mt-2 flex gap-2">
+          <button class="btn-ghost" data-act="run" data-id="${esc(x.id)}">הרץ</button>
+          <button class="btn-ghost" data-act="del" data-id="${esc(x.id)}">מחק</button>
+        </div>`;
+      ul.appendChild(li);
+    });
+    if(!ul.children.length) ul.innerHTML='<li class="p-3 rounded-lg border text-gray-500">אין אוטומציות שמורות</li>';
+  }catch{ ul.innerHTML='<li class="p-3 rounded-lg border text-red-600">שגיאה בטעינה</li>'; }
+}
+document.getElementById("autos-list").addEventListener("click", async (e)=>{
+  const btn=e.target.closest("button[data-act]"); if(!btn) return;
+  const id=btn.dataset.id, act=btn.dataset.act;
+  if(act==="run"){
+    addBubble(`▶️ מריץ אוטומציה שמורה (${esc(id)})…`,"sys");
+    const j=await (await fetch("/api/automations/execute-saved",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id})})).json();
+    addBubble((j.ok?"✅":"❌")+" תוצאה: "+mono(j),"sys");
+  } else if (act==="del"){
+    if(!confirm("למחוק את האוטומציה?")) return;
+    await fetch("/api/automations/"+encodeURIComponent(id),{method:"DELETE"}); loadMyAutomations();
+  }
+});
+
+/* Bindings */
+document.getElementById("btn-g-connect").addEventListener("click", connectGoogle);
+document.getElementById("btn-g-disconnect").addEventListener("click", disconnectGoogle);
+document.getElementById("btn-debug-nlp").addEventListener("click", ()=> planFromText());
+document.getElementById("btn-create").addEventListener("click", ()=> planFromText());
+document.getElementById("btn-save-defaults").addEventListener("click", saveDefaults);
+document.getElementById("btn-open-review").addEventListener("click", ()=> document.getElementById("review").classList.remove("hidden"));
+document.getElementById("btn-run-now").addEventListener("click", ()=> executeWithPlan({}, false));
+document.getElementById("btn-run-reviewed").addEventListener("click", ()=> executeWithPlan({}, true));
+document.getElementById("btn-save-automation").addEventListener("click", saveAutomation);
+document.getElementById("autos-search").addEventListener("input", loadMyAutomations);
+
+/* Init */
+(function init(){
+  refreshGoogleAccount(); loadDefaults(); renderSuggested(); loadMyAutomations();
+  if(location.hash.includes("connected=1")){ addBubble("🔐 התחברת ל-Google","sys"); location.hash=""; }
+})();
+</script>
+</body>
+</html>
