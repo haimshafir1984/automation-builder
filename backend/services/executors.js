@@ -5,39 +5,26 @@ const {
 } = require('./google-api');
 const { sanitizeLog } = require('../utils/sanitize');
 
-/**
- * מריץ steps לפי הסדר.
- * שומר "items" מהטריגר כדי שאקשנים אחרי זה ירוצו על כל item.
- */
 async function executeSteps(steps = []) {
   try {
     if (!Array.isArray(steps) || !steps.length) {
       return { ok: false, error: 'EMPTY_STEPS' };
     }
 
-    // הקשר מצטבר בין צעדים
-    let items = null; // מערך של אייטמים (למשל הודעות Gmail)
-    let lastTriggerType = null;
+    let items = null;
 
     for (const step of steps) {
       const { trigger, action } = step;
 
-      // ===========================
-      // TRIGGERS
-      // ===========================
+      // -------- TRIGGERS --------
       if (trigger) {
         if (trigger.type === 'gmail.unreplied') {
           const p = normalizeGmailUnrepliedParams(trigger.params || {});
-          // שדות חובה
           if (!p.fromEmail) {
             return {
               ok: false,
               error: 'MISSING_FIELDS',
-              missing: [{
-                key: 'fromEmail',
-                label: 'כתובת המייל של השולח',
-                example: 'name@example.com',
-              }],
+              missing: [{ key: 'fromEmail', label: 'כתובת המייל של השולח', example: 'name@example.com' }]
             };
           }
 
@@ -45,20 +32,15 @@ async function executeSteps(steps = []) {
             fromEmail: p.fromEmail,
             newerThanDays: p.newerThanDays,
             hours: p.hours,
-            limit: p.limit,
+            limit: p.limit
           });
 
-          items = list;         // נשמור להמשך
-          lastTriggerType = 'gmail.unreplied';
-          continue;             // לצעד הבא
+          items = list;
+          continue;
         }
-
-        // טריגרים אחרים בעתיד...
       }
 
-      // ===========================
-      // ACTIONS
-      // ===========================
+      // -------- ACTIONS --------
       if (action) {
         if (action.type === 'sheets.append') {
           const p = normalizeSheetsAppendParams(action.params || {});
@@ -70,22 +52,20 @@ async function executeSteps(steps = []) {
               missing: [{
                 key: 'spreadsheetId',
                 label: 'ה-ID של ה-Google Sheet',
-                example: 'https://docs.google.com/spreadsheets/d/<ID>/edit',
-              }],
+                example: 'https://docs.google.com/spreadsheets/d/<ID>/edit'
+              }]
             };
           }
 
-          // אם הגיענו לפה בלי טריגר קודם שמייצר items — עדיין נכתוב שורה אחת "ריקה" עם פלייסהולדרים (אפשר לשנות התנהגות).
           const sourceItems = Array.isArray(items) && items.length ? items : [null];
 
           for (const item of sourceItems) {
             const resolvedRow = item ? resolvePlaceholders(p.row, item) : { ...p.row };
             await appendRowToSheet(p.spreadsheetId, p.sheetName, resolvedRow);
           }
+
           continue;
         }
-
-        // אקשנים אחרים בעתיד...
       }
     }
 
@@ -96,32 +76,40 @@ async function executeSteps(steps = []) {
   }
 }
 
-// -----------------------------
-// Normalizers & defaults
-// -----------------------------
+// -------------------- NORMALIZERS --------------------
 
 function normalizeGmailUnrepliedParams(params) {
-  const out = { ...params };
-  // תמיכה בשמות שונים
-  if (out.from) out.fromEmail = out.fromEmail || out.from;
-  // ברירות מחדל ידידותיות
-  out.newerThanDays = out.newerThanDays != null ? Number(out.newerThanDays) : 30;
-  out.hours = out.hours != null ? Number(out.hours) : null;
-  out.limit = out.limit != null ? Number(out.limit) : 50;
+  const src = params || {};
+  const out = {};
+
+  out.fromEmail = src.fromEmail || src.from || null;
+
+  // hours: מנסים לחלץ מספר. אם אין, נשאיר null (ה-Gmail query לא יכיל newer_than שעות)
+  out.hours = coerceNumber(src.hours);
+  if (!out.hours) {
+    const h = extractLastNumber(src.minutes) || extractLastNumber(src.delay) || extractLastNumber(src.time);
+    if (h) out.hours = Number(h);
+  }
+
+  // newerThanDays ברירת מחדל 30
+  out.newerThanDays = coerceNumber(src.newerThanDays) || coerceNumber(src.days) || 30;
+
+  // limit סביר
+  out.limit = Math.min(Math.max(coerceNumber(src.limit) || coerceNumber(src.maxResults) || 50, 1), 200);
+
   return out;
 }
 
 function normalizeSheetsAppendParams(params) {
-  const out = { ...params };
-  if (out.spreadsheet && !out.spreadsheetId) {
-    out.spreadsheetId = out.spreadsheet;
-    delete out.spreadsheet;
-  }
-  // ברירת מחדל לשם גיליון
-  out.sheetName = out.sheetName || 'Sheet1';
+  const src = params || {};
+  const out = {};
 
-  // row חכם כברירת מחדל
-  if (!out.row || typeof out.row !== 'object' || Array.isArray(out.row)) {
+  out.spreadsheetId = src.spreadsheetId || src.spreadsheet || '';
+  out.sheetName = src.sheetName || 'Sheet1';
+
+  if (src.row && typeof src.row === 'object' && !Array.isArray(src.row)) {
+    out.row = src.row;
+  } else {
     out.row = {
       from: "{{item.from}}",
       subject: "{{item.subject}}",
@@ -131,10 +119,28 @@ function normalizeSheetsAppendParams(params) {
       snippet: "{{item.snippet}}",
       to: "{{item.to}}",
       cc: "{{item.cc}}",
-      labels: "{{item.labels}}",
+      labels: "{{item.labels}}"
     };
   }
+
   return out;
+}
+
+function coerceNumber(v) {
+  if (v == null) return null;
+  if (typeof v === 'number' && isFinite(v)) return v;
+  if (typeof v === 'string') {
+    const m = v.match(/-?\d+(\.\d+)?/);
+    return m ? Number(m[0]) : null;
+  }
+  return null;
+}
+
+function extractLastNumber(v) {
+  if (typeof v !== 'string') return null;
+  const m = [...v.matchAll(/(\d+(?:\.\d+)?)/g)];
+  if (!m.length) return null;
+  return m[m.length - 1][1];
 }
 
 module.exports = { executeSteps };
