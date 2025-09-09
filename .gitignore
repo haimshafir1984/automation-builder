@@ -1,18 +1,25 @@
 # Node
 node_modules/
-npm-debug.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-lock.yaml
+# אל תתעלם מ-package-lock.json, תשאיר אותו ב-git
 
-# Env
+# Env & Secrets
 .env
-.env.local
-
-# Local data & tokens (VERY IMPORTANT)
-backend/data/
-backend_hold/
-**/google_tokens.json
-**/store.json
-**/gsa.json
+*.env
 
 # Logs
 logs/
 *.log
+combined.log
+error.log
+
+# Build & Misc
+dist/
+coverage/
+
+# OS
+.DS_Store
+Thumbs.db
