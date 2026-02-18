@@ -1,0 +1,70 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model Employee {
+  id           Int       @id @default(autoincrement())
+  name         String
+  employeeCode String    @unique
+  hourlyRate   Float
+  salesTarget  Float
+
+  sales        Sale[]
+  shifts       Shift[]
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model Sale {
+  id         Int       @id @default(autoincrement())
+  employee   Employee  @relation(fields: [employeeId], references: [id])
+  employeeId Int
+  amount     Float
+  bonusRate  Float     @default(0)
+  date       DateTime  @default(now())
+}
+
+model Shift {
+  id         Int       @id @default(autoincrement())
+  employee   Employee  @relation(fields: [employeeId], references: [id])
+  employeeId Int
+  date       DateTime
+  hours      Float
+}
+
+model Product {
+  id          Int                     @id @default(autoincrement())
+  name        String
+  sku         String                  @unique
+  maxStock    Int                     // initial/maximum reference level for 10% logic
+  currentStock Int                    @default(0)
+
+  transactions InventoryTransaction[]
+
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+}
+
+model InventoryTransaction {
+  id        Int      @id @default(autoincrement())
+  product   Product  @relation(fields: [productId], references: [id])
+  productId Int
+  quantity  Int
+  type      String
+  createdAt DateTime @default(now())
+}
+
+model Customer {
+  id        Int      @id @default(autoincrement())
+  name      String
+  phone     String
+  email     String   @unique
+  joinedAt  DateTime @default(now())
+}
+
