@@ -1,15 +1,22 @@
 import Section from "@/components/Section";
-import { publications } from "@/data/publications";
+import AdminEditHint from "@/components/AdminEditHint";
+import { getSiteContent } from "@/lib/site-content";
 
-export default function PublicationsPage() {
+export default async function PublicationsPage() {
+  const { publications } = await getSiteContent();
+
   return (
     <Section
-      title="אקדמיה ופרסומים"
-      subtitle="מעורבות מחקרית ופרסומים בתחום החומרים הדנטליים והדבקה לדנטין (דוגמאות)."
+      title={publications.title}
+      subtitle={publications.subtitle}
     >
+      <AdminEditHint section="publications" />
       <div className="grid gap-4">
-        {publications.map((item) => (
-          <article key={`${item.title}-${item.year}`} className="surface-card p-6">
+        {publications.items.map((item) => (
+          <article
+            key={`${item.title}-${item.year}`}
+            className="surface-card p-6 border-l-4 border-l-[var(--primary-color)]"
+          >
             <h3 className="text-lg font-semibold text-slate-900">{item.title}</h3>
             <div className="mt-2 text-sm text-slate-600">
               <span className="font-medium">שנה:</span> {item.year} |{" "}
@@ -21,7 +28,7 @@ export default function PublicationsPage() {
                   href={item.doiUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 transition duration-300 hover:border-[var(--primary-color)] hover:text-[var(--primary-color)]"
                 >
                   DOI: {item.doi}
                 </a>
@@ -31,7 +38,7 @@ export default function PublicationsPage() {
                   href={item.pubmedUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 transition duration-300 hover:border-[var(--primary-color)] hover:text-[var(--primary-color)]"
                 >
                   PubMed
                 </a>

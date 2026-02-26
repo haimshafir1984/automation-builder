@@ -1,82 +1,77 @@
 import Section from "@/components/Section";
+import AdminEditHint from "@/components/AdminEditHint";
+import { getSiteContent } from "@/lib/site-content";
+import Link from "next/link";
+import { ShieldCheck, ArrowLeft, Stethoscope } from "lucide-react";
 
-export default function AboutPage() {
+export default async function AboutPage() {
+  const { about } = await getSiteContent();
+
   return (
     <Section
-      title="אודות ד״ר בני פרדמן"
-      subtitle="מומחה לשיקום הפה ואסתטיקה דנטלית, עם דגש על תכנון מדויק, שקיפות קלינית ויחס אישי רגוע."
+      title={about.title}
+      subtitle={about.subtitle}
     >
+      <AdminEditHint section="about" />
       <div className="grid gap-6 md:grid-cols-2">
-        <div className="surface-card p-6">
-          <h3 className="font-semibold text-lg">ד״ר בני פרדמן</h3>
+        <div className="surface-card p-7">
+          {about.profileImageUrl ? (
+            <img
+              src={about.profileImageUrl}
+              alt={about.introTitle}
+              className="mb-5 h-60 w-full rounded-2xl border border-slate-200 object-cover"
+            />
+          ) : null}
+          <h3 className="font-bold text-2xl text-slate-900">{about.introTitle}</h3>
           <p className="mt-3 text-slate-600 leading-relaxed">
-            ד״ר בני פרדמן מטפל במקרים שיקומיים ותפקודיים, כולל מקרים מורכבים
-            הדורשים ראייה רחבה ותכנון רב-שלבי. תהליך העבודה משלב אבחון מעמיק,
-            תכנון דיגיטלי, ושיח מקצועי ברור עם המטופל לכל אורך הדרך.
+            {about.introText}
           </p>
-          <ul className="mt-4 space-y-2 text-slate-700">
-            <li>• מומחה לשיקום הפה ואסתטיקה דנטלית</li>
-            <li>• טיפול במקרים מורכבים עם תכנון פרטני</li>
-            <li>• גישה רפואית מדויקת עם תקשורת בגובה העיניים</li>
+          <ul className="mt-5 space-y-2 text-slate-700">
+            {about.introBullets.map((item) => (
+              <li key={item} className="flex items-start gap-2">
+                <ShieldCheck size={16} className="mt-0.5 text-[var(--primary-color)]" />
+                <span>{item}</span>
+              </li>
+            ))}
           </ul>
+          <Link
+            href="/contact"
+            className="mt-6 inline-flex items-center gap-1 text-sm font-semibold text-[var(--primary-color)] transition duration-300 hover:gap-2"
+          >
+            לתיאום פגישת ייעוץ
+            <ArrowLeft size={16} />
+          </Link>
         </div>
 
-        <div className="surface-card p-6 bg-gradient-to-b from-sky-50/70 to-white">
-          <h3 className="font-semibold text-lg">גישה טיפולית</h3>
+        <div className="surface-card p-7 bg-gradient-to-b from-[var(--bg-glow-1)] to-white">
+          <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
+            <Stethoscope size={14} className="text-[var(--primary-color)]" />
+            גישה רפואית מתקדמת
+          </div>
+          <h3 className="mt-4 font-bold text-2xl text-slate-900">{about.approachTitle}</h3>
           <p className="mt-3 text-slate-600 leading-relaxed">
-            בכל תכנית טיפול מושם דגש על תפקוד, אסתטיקה ויציבות לטווח ארוך.
-            לפני כל שלב מוצגות האפשרויות, המשמעויות והשלבים הבאים בצורה ברורה.
+            {about.approachText}
           </p>
           <div className="mt-4 grid gap-3">
-            <div className="rounded-xl bg-white border border-slate-200 p-4">
-              <div className="font-semibold">שקיפות ותיאום ציפיות</div>
-              <div className="text-sm text-slate-600 mt-1">
-                הסבר קליני ברור על החלופות, השלבים וההחלטות הטיפוליות.
+            {about.approachItems.map((item) => (
+              <div key={item.title} className="rounded-xl bg-white border border-slate-200 p-4">
+                <div className="font-semibold">{item.title}</div>
+                <div className="text-sm text-slate-600 mt-1">{item.text}</div>
               </div>
-            </div>
-            <div className="rounded-xl bg-white border border-slate-200 p-4">
-              <div className="font-semibold">תכנון קפדני</div>
-              <div className="text-sm text-slate-600 mt-1">
-                תכנון שיקומי דיגיטלי והגדרה מדויקת של מטרות טיפול.
-              </div>
-            </div>
-            <div className="rounded-xl bg-white border border-slate-200 p-4">
-              <div className="font-semibold">אקדמיה ומחקר</div>
-              <div className="text-sm text-slate-600 mt-1">
-                מעורבות מתמשכת בתחומי חומרים דנטליים והדבקה כחלק מחשיבה קלינית עדכנית.
-              </div>
-            </div>
+            ))}
           </div>
         </div>
       </div>
 
-      <div className="mt-8 rounded-2xl border border-sky-100 bg-gradient-to-b from-sky-50/70 to-white p-6">
-        <h3 className="text-xl font-bold text-slate-900">עקרונות עבודה</h3>
+      <div className="mt-8 rounded-2xl border border-slate-200 bg-gradient-to-b from-[var(--bg-glow-2)] to-white p-6">
+        <h3 className="text-xl font-bold text-slate-900">{about.principlesTitle}</h3>
         <div className="mt-4 grid gap-4 md:grid-cols-2">
-          <div className="rounded-xl bg-white border border-slate-200 p-4">
-            <div className="font-semibold">דיוק רפואי</div>
-            <p className="mt-1 text-sm text-slate-600">
-              קבלת החלטות קליניות על בסיס אבחון יסודי ותכנון מדויק.
-            </p>
-          </div>
-          <div className="rounded-xl bg-white border border-slate-200 p-4">
-            <div className="font-semibold">שמרנות</div>
-            <p className="mt-1 text-sm text-slate-600">
-              בחירה בפתרונות שמאזנים בין שיקום איכותי לשמירה על רקמות בריאות.
-            </p>
-          </div>
-          <div className="rounded-xl bg-white border border-slate-200 p-4">
-            <div className="font-semibold">אסתטיקה טבעית</div>
-            <p className="mt-1 text-sm text-slate-600">
-              תוצאה הרמונית שמתאימה למבנה הפנים ולחיוך האישי של כל מטופל.
-            </p>
-          </div>
-          <div className="rounded-xl bg-white border border-slate-200 p-4">
-            <div className="font-semibold">תיאום ציפיות</div>
-            <p className="mt-1 text-sm text-slate-600">
-              שיח פתוח וברור על תהליך, שלבים ויעדים קליניים לפני תחילת הטיפול.
-            </p>
-          </div>
+          {about.principles.map((item) => (
+            <div key={item.title} className="rounded-xl bg-white border border-slate-200 p-4">
+              <div className="font-semibold">{item.title}</div>
+              <p className="mt-1 text-sm text-slate-600">{item.text}</p>
+            </div>
+          ))}
         </div>
       </div>
     </Section>

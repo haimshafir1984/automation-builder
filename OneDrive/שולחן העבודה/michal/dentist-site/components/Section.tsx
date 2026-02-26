@@ -8,7 +8,7 @@ export default function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="py-14">
+    <section className="py-20">
       <div className="container">
         <div className="max-w-2xl">
           <h2 className="text-2xl md:text-3xl font-extrabold tracking-tight text-slate-900">

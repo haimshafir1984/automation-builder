@@ -1,10 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import type { SiteContent } from "@/lib/site-content";
 
 type FormState = { ok: false; msg: string } | { ok: true; msg: string };
 
-export default function ContactForm() {
+type FormLabels = SiteContent["contact"]["formLabels"];
+
+export default function ContactForm({ labels }: { labels: FormLabels }) {
   const [loading, setLoading] = useState(false);
   const [state, setState] = useState<FormState | null>(null);
 
@@ -49,39 +52,37 @@ export default function ContactForm() {
     >
       <div className="grid gap-4 md:grid-cols-2">
         <div>
-          <label className="text-sm font-medium text-slate-700">שם מלא</label>
+          <label className="text-sm font-medium text-slate-700">{labels.fullName}</label>
           <input
             name="fullName"
             required
-            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
-            placeholder="שם מלא"
+            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none transition focus:border-[var(--primary-color)] focus:ring-2 focus:ring-[var(--bg-glow-2)]"
+            placeholder={labels.fullNamePlaceholder}
           />
         </div>
         <div>
-          <label className="text-sm font-medium text-slate-700">טלפון לחזרה</label>
+          <label className="text-sm font-medium text-slate-700">{labels.phone}</label>
           <input
             name="phone"
             required
-            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
-            placeholder="05x-xxxxxxx"
+            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none transition focus:border-[var(--primary-color)] focus:ring-2 focus:ring-[var(--bg-glow-2)]"
+            placeholder={labels.phonePlaceholder}
           />
         </div>
         <div>
-          <label className="text-sm font-medium text-slate-700">
-            אימייל (אופציונלי)
-          </label>
+          <label className="text-sm font-medium text-slate-700">{labels.email}</label>
           <input
             name="email"
             type="email"
-            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
-            placeholder="name@email.com"
+            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none transition focus:border-[var(--primary-color)] focus:ring-2 focus:ring-[var(--bg-glow-2)]"
+            placeholder={labels.emailPlaceholder}
           />
         </div>
         <div>
-          <label className="text-sm font-medium text-slate-700">מועד מועדף לחזרה</label>
+          <label className="text-sm font-medium text-slate-700">{labels.preferredTime}</label>
           <select
             name="preferredTime"
-            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
+            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none transition focus:border-[var(--primary-color)] focus:ring-2 focus:ring-[var(--bg-glow-2)]"
             defaultValue="בוקר"
           >
             <option>בוקר</option>
@@ -93,12 +94,12 @@ export default function ContactForm() {
       </div>
 
       <div className="mt-4">
-        <label className="text-sm font-medium text-slate-700">סיבת הפנייה</label>
+        <label className="text-sm font-medium text-slate-700">{labels.message}</label>
         <textarea
           name="message"
           required
-          className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 min-h-[110px] outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
-          placeholder="תיאור קצר של הצורך או המטרה לטיפול"
+          className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 min-h-[110px] outline-none transition focus:border-[var(--primary-color)] focus:ring-2 focus:ring-[var(--bg-glow-2)]"
+          placeholder={labels.messagePlaceholder}
         />
       </div>
 
@@ -107,7 +108,7 @@ export default function ContactForm() {
           disabled={loading}
           className="btn-primary disabled:opacity-60"
         >
-          {loading ? "שולח..." : "חזרו אליי"}
+          {loading ? labels.loading : labels.submit}
         </button>
 
         {state ? (
@@ -120,7 +121,7 @@ export default function ContactForm() {
       </div>
 
       <p className="mt-3 text-xs text-slate-500">
-        אין לשלוח מידע רפואי רגיש בטופס. במקרה חירום רפואי יש לפנות למוקד מתאים.
+        {labels.privacy}
       </p>
     </form>
   );
